@@ -9,6 +9,7 @@ from tensorboardX import SummaryWriter
 import yaml
 import cv2
 import numpy as np
+import shutil
 
 from concern.config import Configurable, State
 
@@ -64,7 +65,12 @@ class Logger(Configurable):
         if not os.path.exists(storage_dir):
             os.makedirs(storage_dir)
         if not os.path.exists(self.log_dir):
-            os.symlink(storage_dir, self.log_dir)
+            #os.symlink(storage_dir, self.log_dir)            
+            try:
+                # symlink는 관리자 권한이 없으면 실패하므로, 복사로 대체
+                os.symlink(storage_dir, self.log_dir)
+            except (OSError, NotImplementedError):
+                shutil.copytree(storage_dir, self.log_dir, dirs_exist_ok=True)
 
     def save_dir(self, dir_name):
         return os.path.join(self.log_dir, dir_name)
