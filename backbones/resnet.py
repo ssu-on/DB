@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import math
 import torch.utils.model_zoo as model_zoo
@@ -260,14 +261,23 @@ def deformable_resnet18(pretrained=True, **kwargs):
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     model = ResNet(BasicBlock, [2, 2, 2, 2],
                     dcn=dict(modulated=True,
                             deformable_groups=1,
                             fallback_on_stride=False),
                     stage_with_dcn=[False, True, True, True], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(
-            model_urls['resnet18']), strict=False)
+        print(device)
+        #model.load_state_dict(model_zoo.load_url(model_urls['resnet18']), strict=False)
+        #pretrained_dict = model_zoo.load_url(model_urls['resnet18'], map_location='cpu') # demo할 때는 'device'로 바꾸기
+        pretrained_dict = model_zoo.load_url(model_urls['resnet18'], map_location=device) # demo할 때는 'device'로 바꾸기
+        model.load_state_dict(pretrained_dict, strict=False)
+
+    print("good")
+    model = model.to(device)
+    
     return model
 
 
