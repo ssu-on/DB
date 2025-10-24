@@ -57,16 +57,20 @@ def main():
         experiment = Configurable.construct_class_from_config(experiment_args)
         print("✅ 실험 설정 로드 완료")
         
-        # 2. Subtitle Detection 데모 생성
-        print("🔧 Subtitle Detection 데모 생성 중...")
-        from dbnet_subtitle_integration import create_subtitle_detection_demo
+        # 2. Geometry-Aware Subtitle Detection 데모 생성
+        print("🔧 Geometry-Aware Subtitle Detection 데모 생성 중...")
+        from dbnet_geometry_aware_integration import create_subtitle_detection_demo
         
         subtitle_demo = create_subtitle_detection_demo(
             experiment=experiment,
             subtitle_region_ratio=args.subtitle_region_ratio,
             brightness_threshold=args.brightness_threshold,
             color_threshold=args.color_threshold,
-            use_refinement=not args.no_refinement
+            use_refinement=not args.no_refinement,
+            aspect_ratio_threshold=3.0,
+            height_min=0.02,
+            height_max=0.15,
+            bottom_ratio=0.3
         )
         print("✅ Subtitle Detection 데모 생성 완료")
         
