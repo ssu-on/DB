@@ -130,21 +130,21 @@ class SegDetector(nn.Module):
         p3 = self.out3(out3)
         p2 = self.out2(out2)
 
-        fuse = torch.cat((p5, p4, p3, p2), 1)
+        fuse = torch.cat((p5, p4, p3, p2), 1)                   # 다중 스케일 feauture map
         # this is the pred module, not binarization module; 
         # We do not correct the name due to the trained model.
-        binary = self.binarize(fuse)
-        if self.training:
-            result = OrderedDict(binary=binary)
+        binary = self.binarize(fuse)                            # 결합된 특징 (fuse)를 입력으로 p-map(biinary) 생성
+        if self.training:                                       # train 모드, eval 모드에 따라서 return이 다름
+            result = OrderedDict(binary=binary)                 # 이후에 thresh, thresh_binary를 추가하기 위해 딕셔너리 형태로 만듦. loss 계산 시 pred가 dict 형태여야 함 (e.g., {'binary': binary, 'thresh': thresh, 'thresh_binary': thresh_binary})
         else:
-            return binary
-        if self.adaptive and self.training:
+            return binary                                       # eval 모드에서는 p-map(binary)만 반환        
+        if self.adaptive and self.training:                     # adaptive 모드, thresh, binary-thresh까지 추가 반환, DBNet의 핵심 개념으로, 픽셀별로 다른 threshold를 학습
             if self.serial:
                 fuse = torch.cat(
                         (fuse, nn.functional.interpolate(
                             binary, fuse.shape[2:])), 1)
-            thresh = self.thresh(fuse)
-            thresh_binary = self.step_function(binary, thresh)
+            thresh = self.thresh(fuse)                                  # 픽셀별로 서로 다른 threshold를 학습
+            thresh_binary = self.step_function(binary, thresh)          # 픽셀별로 binary와 해당 위치의 thresh를 이용해 thresh_binary 생성
             result.update(thresh=thresh, thresh_binary=thresh_binary)
         return result
 

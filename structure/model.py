@@ -16,7 +16,7 @@ class BasicModel(nn.Module):
         self.decoder = getattr(decoders, args['decoder'])(**args.get('decoder_args', {}))
 
     def forward(self, data, *args, **kwargs):
-        return self.decoder(self.backbone(data), *args, **kwargs)
+        return self.decoder(self.backbone(data), *args, **kwargs)                               # 입력 이미지가 backbone을 통과해 feature 추출
 
 
 def parallelize(model, distributed, local_rank):
@@ -49,18 +49,18 @@ class SegDetectorModel(nn.Module):
 
     def forward(self, batch, training=True):
         if isinstance(batch, dict):
-            data = batch['image'].to(self.device)
+            data = batch['image'].to(self.device)           # batch image를 GPU로 이동
         else:
             data = batch.to(self.device)
-        data = data.float()
-        pred = self.model(data, training=self.training)
+        data = data.float()                                 # image를 float로 변환
+        pred = self.model(data, training=self.training)     # 모델을 통해 예측 수행, self.model은 BasicModle 클래스의 인스턴스
 
         if self.training:
             for key, value in batch.items():
                 if value is not None:
                     if hasattr(value, 'to'):
-                        batch[key] = value.to(self.device)
-            loss_with_metrics = self.criterion(pred, batch)
+                        batch[key] = value.to(self.device)  # batch의 key에 해당하는 value(gt, mask, thresh_map, thresh_mask)를 GPU로 이동
+            loss_with_metrics = self.criterion(pred, batch) # pred와 정답을 비교해 loss 계산
             loss, metrics = loss_with_metrics
             return loss, pred, metrics
         return pred
