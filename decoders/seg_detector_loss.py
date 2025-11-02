@@ -262,3 +262,7 @@ class L1LeakyDiceLoss(nn.Module):
         metrics.update(**l1_metric, thresh_loss=thresh_loss)
         loss = main_loss + thresh_loss + l1_loss * self.l1_scale
         return loss, metrics
+
+
+# Import SubtitleRefinedL1BalanceCELoss from subtitle_refined_loss module
+from .subtitle_refined_loss import SubtitleRefinedL1BalanceCELoss

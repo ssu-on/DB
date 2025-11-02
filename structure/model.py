@@ -60,7 +60,7 @@ class SegDetectorModel(nn.Module):
                 if value is not None:
                     if hasattr(value, 'to'):
                         batch[key] = value.to(self.device)  # batch의 key에 해당하는 value(gt, mask, thresh_map, thresh_mask)를 GPU로 이동
-            loss_with_metrics = self.criterion(pred, batch) # pred와 정답을 비교해 loss 계산
+            loss_with_metrics = self.criterion(pred, batch) # pred와 정답을 비교해 loss 계산, SubtitleRefinedL1BalanceCELoss.forward()가 실행
             loss, metrics = loss_with_metrics
             return loss, pred, metrics
         return pred
