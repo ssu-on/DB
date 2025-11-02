@@ -63,7 +63,7 @@ class Trainer:
 
         self.logger.report_time('Init')
 
-        model.train()
+        model.train()                                                               # 모델을 학습 모드로 설정 (dropout, batch normalization 등 활성화)
         while True:
             self.logger.info('Training epoch ' + str(epoch))
             self.logger.epoch(epoch)

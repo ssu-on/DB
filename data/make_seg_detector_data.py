@@ -29,36 +29,33 @@ class MakeSegDetectorData(Configurable):
         filename = data['filename']
 
         h, w = image.shape[:2]
-        polygons, ignore_tags = self.validate_polygons(
-            polygons, ignore_tags, h, w)
+        polygons, ignore_tags = self.validate_polygons(polygons, ignore_tags, h, w)
         gt = np.zeros((1, h, w), dtype=np.float32)
         mask = np.ones((h, w), dtype=np.float32)
-        for i in range(polygons.shape[0]):
+        for i in range(polygons.shape[0]):                                          # polygons.shape[0] is the number of polygons
             polygon = polygons[i]
-            height = min(np.linalg.norm(polygon[0] - polygon[3]),
+            height = min(np.linalg.norm(polygon[0] - polygon[3]),                   # 좌, 우 두 변의 길이 중 작은 값을 높이로 사용
                          np.linalg.norm(polygon[1] - polygon[2]))
-            width = min(np.linalg.norm(polygon[0] - polygon[1]),
+            width = min(np.linalg.norm(polygon[0] - polygon[1]),                    # 상, 하 두 변의 길이 중 작은 값을 너비로 사용
                         np.linalg.norm(polygon[2] - polygon[3]))
-            if ignore_tags[i] or min(height, width) < self.min_text_size:
-                cv2.fillPoly(mask, polygon.astype(
-                    np.int32)[np.newaxis, :, :], 0)
+            if ignore_tags[i] or min(height, width) < self.min_text_size:           # min_text_size: 8
+                cv2.fillPoly(mask, polygon.astype(np.int32)[np.newaxis, :, :], 0)
                 ignore_tags[i] = True
-            else:
+            else:                                                                   # 문자 크기가 min_text_size 이상인 경우, 문자 영역을 추출
                 polygon_shape = Polygon(polygon)
-                distance = polygon_shape.area * \
-                    (1 - np.power(self.shrink_ratio, 2)) / polygon_shape.length
+                distance = polygon_shape.area * \           
+                    (1 - np.power(self.shrink_ratio, 2)) / polygon_shape.length     # shrink polygon by shrink_ratio, polygon을 shrink_ratio만큼 축소   
                 subject = [tuple(l) for l in polygons[i]]
                 padding = pyclipper.PyclipperOffset()
-                padding.AddPath(subject, pyclipper.JT_ROUND,
-                                pyclipper.ET_CLOSEDPOLYGON)
+                padding.AddPath(subject, pyclipper.JT_ROUND, pyclipper.ET_CLOSEDPOLYGON)
                 shrinked = padding.Execute(-distance)
-                if shrinked == []:
+                if shrinked == []:                                                       # shrinked가 빈 리스트인 경우, 문자 영역을 추출하지 못한 경우, 문자 영역을 무시
                     cv2.fillPoly(mask, polygon.astype(
                         np.int32)[np.newaxis, :, :], 0)
                     ignore_tags[i] = True
                     continue
-                shrinked = np.array(shrinked[0]).reshape(-1, 2)
-                cv2.fillPoly(gt[0], [shrinked.astype(np.int32)], 1)
+                shrinked = np.array(shrinked[0]).reshape(-1, 2)                         # shrink 성공시: shrinked는 문자 영역의 좌표 리스트
+                cv2.fillPoly(gt[0], [shrinked.astype(np.int32)], 1)                     # gt[0]는 문자 영역을 1로 채우는 마스크
 
         if filename is None:
             filename = ''
