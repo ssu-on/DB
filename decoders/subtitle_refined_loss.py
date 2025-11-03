@@ -26,7 +26,8 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
     
     def __init__(self, eps=1e-6, l1_scale=10, bce_scale=5,
                  tilt_threshold=0.3, wobble_threshold=5.0,
-                 binary_threshold=0.5, enable_subtitle_filter=True):
+                 binary_threshold=0.5, enable_subtitle_filter=True,
+                 enable_color_check=True, color_variance_threshold=0.1):
         super(SubtitleRefinedL1BalanceCELoss, self).__init__()
         from .dice_loss import DiceLoss
         from .l1_loss import MaskL1Loss
@@ -44,8 +45,10 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
         self.wobble_threshold = wobble_threshold
         self.binary_threshold = binary_threshold
         self.enable_subtitle_filter = enable_subtitle_filter
+        self.enable_color_check = enable_color_check
+        self.color_variance_threshold = color_variance_threshold
     
-    def compute_subtitle_mask(self, thresh_binary, mask):
+    def compute_subtitle_mask(self, thresh_binary, mask, polygons_list=None, ignore_tags_list=None, images=None):
         """
         Compute subtitle mask from thresh_binary based on geometric cues.
         
@@ -78,13 +81,89 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
         for b in range(N):
             text_map = binary_map[b, 0]  # (H, W)
             orig_mask = mask[b] if mask.dim() == 3 else mask  # (H, W)
-            
-            # Apply original mask
-            text_map = text_map * orig_mask
-            
-            # Check tilt and wobble for subtitle-like regions
-            subtitle_map = self._check_flatness_gpu(text_map)
-            
+
+            # If polygons are provided, evaluate per-polygon regions using ROIs
+            if polygons_list is not None and b < len(polygons_list) and polygons_list[b] is not None:
+                per_sample_mask = torch.zeros_like(orig_mask)
+                b_polys = polygons_list[b]
+                b_ignores = None
+                if ignore_tags_list is not None and b < len(ignore_tags_list):
+                    b_ignores = ignore_tags_list[b]
+
+                # polygons are expected as a list of numpy arrays with shape (P, 2)
+                for idx, poly in enumerate(b_polys):
+                    if b_ignores is not None:
+                        try:
+                            if int(b_ignores[idx]) != 0:
+                                continue
+                        except Exception:
+                            pass
+                    try:
+                        # compute bounding box on CPU (lightweight) and clip
+                        import numpy as np  # local import to avoid global dependency if unused
+                        import cv2
+                        if not isinstance(poly, np.ndarray):
+                            poly = np.array(poly)
+                        x_coords = poly[:, 0]
+                        y_coords = poly[:, 1]
+                        xmin = int(max(0, min(float(x_coords.min()), W - 1)))
+                        xmax = int(min(W - 1, max(float(x_coords.max()), 0)))
+                        ymin = int(max(0, min(float(y_coords.min()), H - 1)))
+                        ymax = int(min(H - 1, max(float(y_coords.max()), 0)))
+                    except Exception:
+                        # Fallback: skip malformed polygon
+                        continue
+
+                    if xmax < xmin or ymax < ymin:
+                        continue
+
+                    roi = text_map[ymin:ymax + 1, xmin:xmax + 1]                                    # thresh_binary를 이진화한 text_map에서 해당 폴리곤의 bbox 영역만 잘라낸 예측 맵(torch, float)
+                    if roi.numel() == 0:
+                        continue
+
+                    # Rasterize polygon inside ROI to mask strictly within polygon
+                    try:
+                        poly_rel = poly.copy()                                                      # poly 좌표를 ROI 좌표계로 변환
+                        poly_rel[:, 0] = poly_rel[:, 0] - xmin
+                        poly_rel[:, 1] = poly_rel[:, 1] - ymin
+                        h_roi = ymax - ymin + 1
+                        w_roi = xmax - xmin + 1
+                        poly_mask_np = np.zeros((h_roi, w_roi), dtype=np.uint8)
+                        cv2.fillPoly(poly_mask_np, [poly_rel.astype(np.int32)], 1)                  # ROI 내 polygon 내부 픽셀을 1로 채움
+                        poly_mask = torch.from_numpy(poly_mask_np).to(roi.device, dtype=roi.dtype)
+                        roi = roi * poly_mask                                                       # ROI 내 polygon 내부 픽셀만 남김
+                    except Exception:
+                        # If rasterization fails, proceed with bbox-only mask
+                        pass
+
+                    if roi.sum() < 1:
+                        continue
+
+                    roi_sub = self._check_flatness_gpu(roi)
+
+                    # Optional color consistency check inside predicted region
+                    if self.enable_color_check and images is not None and roi_sub.sum() > 0:
+                        # Extract corresponding image ROI (C, H_roi, W_roi)
+                        try:
+                            img_roi = images[b][:, ymin:ymax + 1, xmin:xmax + 1]
+                            # Use only pixels predicted as subtitle-like (roi_sub>0)
+                            region_ok = self._check_color_consistency_gpu(img_roi, roi_sub)
+                            if not region_ok:
+                                continue
+                        except Exception:
+                            # If any issue occurs, skip color check
+                            pass
+                    # Merge back into per-sample mask
+                    per_sample_mask[ymin:ymax + 1, xmin:xmax + 1] = torch.maximum(
+                        per_sample_mask[ymin:ymax + 1, xmin:xmax + 1], roi_sub)
+
+                subtitle_map = per_sample_mask
+            else:
+                # Global check: apply geometric constraints on the whole map
+                # Apply original mask
+                text_map = text_map * orig_mask
+                subtitle_map = self._check_flatness_gpu(text_map)
+
             # Combine with original mask
             subtitle_mask = subtitle_map * orig_mask
             subtitle_masks.append(subtitle_mask)
@@ -153,6 +232,35 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
         
         # Both checks passed - return original text_map as subtitle region
         return text_map
+
+    def _check_color_consistency_gpu(self, img_roi, region_mask):
+        """
+        Check color consistency (dominant color presence) within region.
+
+        Args:
+            img_roi: (C, H, W) image patch tensor (already on device)
+            region_mask: (H, W) float/binary tensor where >0 indicates region
+
+        Returns:
+            bool: True if color variance is below threshold (consistent color)
+        """
+        # Ensure float operations
+        if img_roi.dtype != torch.float32:
+            img_roi = img_roi.float()
+        mask = (region_mask > 0).float()
+        num = mask.sum()
+        if num.item() < 10:
+            return False
+        # Expand mask to channels
+        mask_c = mask.unsqueeze(0)
+        # Compute per-channel mean and variance under mask
+        # E[X]
+        mean = (img_roi * mask_c).sum(dim=(1, 2)) / (num + 1e-6)
+        # E[X^2]
+        mean_sq = ((img_roi ** 2) * mask_c).sum(dim=(1, 2)) / (num + 1e-6)
+        var = torch.clamp(mean_sq - mean ** 2, min=0.0)
+        avg_variance = var.mean().item()
+        return avg_variance < self.color_variance_threshold
     
     def forward(self, pred, batch):
         """
@@ -169,15 +277,18 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
         if 'thresh' in pred and 'thresh_binary' in pred:
             # Compute subtitle mask from thresh_binary (pred 기반 필터링)
             subtitle_mask = self.compute_subtitle_mask(
-                pred['thresh_binary'], batch['mask'])
+                pred['thresh_binary'], batch['mask'],
+                polygons_list=batch.get('polygons', None),
+                ignore_tags_list=batch.get('ignore_tags', None),
+                images=batch.get('image', None))
             
             # Apply subtitle mask to loss calculations
             # Combine with original mask (both must be 1)
             combined_mask = subtitle_mask * batch['mask']
             combined_thresh_mask = subtitle_mask * batch['thresh_mask'] if 'thresh_mask' in batch else combined_mask
             
-            # All losses use subtitle filtering
-            bce_loss = self.bce_loss(pred['binary'], batch['gt'], combined_mask)
+            # BCE는 원래 mask 사용, Dice/L1만 subtitle 필터 적용
+            bce_loss = self.bce_loss(pred['binary'], batch['gt'], batch['mask'])
             l1_loss, l1_metric = self.l1_loss(
                 pred['thresh'], batch['thresh_map'], combined_thresh_mask)
             dice_loss = self.dice_loss(
