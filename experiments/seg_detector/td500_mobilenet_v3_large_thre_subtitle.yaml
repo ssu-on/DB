@@ -61,6 +61,7 @@ define:
             learning_rate:  
                 class: DecayLearningRate
                 epochs: 1200
+                warmup_steps: 2000
         epochs: 1200
 
     validation: &validate

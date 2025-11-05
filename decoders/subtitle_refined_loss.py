@@ -27,7 +27,8 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
     def __init__(self, eps=1e-6, l1_scale=10, bce_scale=5,
                  tilt_threshold=0.3, wobble_threshold=5.0,
                  binary_threshold=0.5, enable_subtitle_filter=True,
-                 enable_color_check=True, color_variance_threshold=0.1):
+                 enable_color_check=True, color_variance_threshold=0.1,
+                 negative_bce_alpha=0.2):
         super(SubtitleRefinedL1BalanceCELoss, self).__init__()
         from .dice_loss import DiceLoss
         from .l1_loss import MaskL1Loss
@@ -47,6 +48,8 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
         self.enable_subtitle_filter = enable_subtitle_filter
         self.enable_color_check = enable_color_check
         self.color_variance_threshold = color_variance_threshold
+        # Auxiliary negative BCE on non-subtitle areas
+        self.negative_bce_alpha = negative_bce_alpha
     
     def compute_subtitle_mask(self, thresh_binary, mask, polygons_list=None, ignore_tags_list=None, images=None):
         """
@@ -293,12 +296,22 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
                 pred['thresh'], batch['thresh_map'], combined_thresh_mask)
             dice_loss = self.dice_loss(
                 pred['thresh_binary'], batch['gt'], combined_mask)
+            # Auxiliary negative BCE on non-subtitle regions
+            bce_neg = None
+            if self.negative_bce_alpha is not None and self.negative_bce_alpha > 0:
+                non_sub_mask = (batch['mask'] * (1.0 - subtitle_mask)).clamp(min=0.0, max=1.0)
+                zeros_gt = torch.zeros_like(batch['gt'])
+                bce_neg = self.bce_loss(pred['binary'], zeros_gt, non_sub_mask)
             
             metrics = dict(bce_loss=bce_loss)
             metrics['thresh_loss'] = dice_loss
             metrics['subtitle_coverage'] = (combined_mask.sum() / (batch['mask'].sum() + 1e-8)).item()
+            if bce_neg is not None:
+                metrics['bce_neg'] = bce_neg
             
             loss = dice_loss + self.l1_scale * l1_loss + bce_loss * self.bce_scale
+            if bce_neg is not None:
+                loss = loss + self.negative_bce_alpha * bce_neg
             metrics.update(**l1_metric)
         else:
             # Fallback: no subtitle filtering if thresh_binary not available
