@@ -89,8 +89,10 @@ define:
     class: ImageDataset
     data_dir:
       - './datasets/TD_TR/TD500/'
+      - './datasets/Subtitles/'
     data_list:
       - './datasets/TD_TR/TD500/train_list.txt'
+      - './datasets/Subtitles/train_list.txt'
     processes:
       - class: AugmentDetectionData
         augmenter_args:
@@ -113,8 +115,10 @@ define:
     class: ImageDataset
     data_dir:
       - './datasets/TD_TR/TD500/'
+      - './datasets/Subtitles/'
     data_list:
       - './datasets/TD_TR/TD500/test_list.txt'
+      - './datasets/Subtitles/test_list.txt'
     processes:
       - class: AugmentDetectionData
         augmenter_args:
