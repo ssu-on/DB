@@ -8,33 +8,36 @@ class MaskL1Loss(nn.Module):
         super(MaskL1Loss, self).__init__()
 
     def forward(self, pred: torch.Tensor, gt, mask):
-        mask_sum = mask.sum()
-        if mask_sum.item() == 0:
-            return mask_sum, dict(l1_loss=mask_sum)
-        else:
         device = pred.device
         dtype = pred.dtype
-        if not isinstance(gt, torch.Tensor):
-            if isinstance(gt, np.ndarray):
-                gt = torch.from_numpy(gt).to(device=device, dtype=dtype)
-            else:
-                gt = torch.as_tensor(gt, device=device, dtype=dtype)
-        else:
-            gt = gt.to(device=device, dtype=dtype)
 
         if not isinstance(mask, torch.Tensor):
             if isinstance(mask, np.ndarray):
-                mask = torch.from_numpy(mask).to(device=device, dtype=dtype)
+                mask = torch.from_numpy(mask)
             else:
-                mask = torch.as_tensor(mask, device=device, dtype=dtype)
-        else:
-            mask = mask.to(device=device, dtype=dtype)
-
+                mask = torch.as_tensor(mask)
+        mask = mask.to(device=device, dtype=dtype)
         if mask.dim() == 4 and mask.size(1) == 1:
             mask = mask[:, 0]
 
+        if not isinstance(gt, torch.Tensor):
+            if isinstance(gt, np.ndarray):
+                gt = torch.from_numpy(gt)
+            elif isinstance(gt, (list, tuple)):
+                gt = torch.stack([torch.as_tensor(g) if not isinstance(g, torch.Tensor) else g for g in gt], dim=0)
+            else:
+                gt = torch.as_tensor(gt)
+        gt = gt.to(device=device, dtype=dtype)
+        if gt.dim() == 4 and gt.size(1) == 1:
+            gt = gt[:, 0]
+
+        mask_sum = mask.sum()
+        if mask_sum.item() <= 0:
+            zero = torch.tensor(0., device=device, dtype=dtype)
+            return zero, dict(l1_loss=zero)
+
         loss = (torch.abs(pred[:, 0] - gt) * mask).sum() / mask_sum
-            return loss, dict(l1_loss=loss)
+        return loss, dict(l1_loss=loss)
 
 
 class BalanceL1Loss(nn.Module):
