@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 
 
 class MaskL1Loss(nn.Module):
@@ -11,7 +12,28 @@ class MaskL1Loss(nn.Module):
         if mask_sum.item() == 0:
             return mask_sum, dict(l1_loss=mask_sum)
         else:
-            loss = (torch.abs(pred[:, 0] - gt) * mask).sum() / mask_sum
+        device = pred.device
+        dtype = pred.dtype
+        if not isinstance(gt, torch.Tensor):
+            if isinstance(gt, np.ndarray):
+                gt = torch.from_numpy(gt).to(device=device, dtype=dtype)
+            else:
+                gt = torch.as_tensor(gt, device=device, dtype=dtype)
+        else:
+            gt = gt.to(device=device, dtype=dtype)
+
+        if not isinstance(mask, torch.Tensor):
+            if isinstance(mask, np.ndarray):
+                mask = torch.from_numpy(mask).to(device=device, dtype=dtype)
+            else:
+                mask = torch.as_tensor(mask, device=device, dtype=dtype)
+        else:
+            mask = mask.to(device=device, dtype=dtype)
+
+        if mask.dim() == 4 and mask.size(1) == 1:
+            mask = mask[:, 0]
+
+        loss = (torch.abs(pred[:, 0] - gt) * mask).sum() / mask_sum
             return loss, dict(l1_loss=loss)
 
 
