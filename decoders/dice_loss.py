@@ -13,7 +13,11 @@ class DiceLoss(nn.Module):
     '''
     def __init__(self, eps=1e-6):
         super(DiceLoss, self).__init__()
-        self.eps = eps
+        # @@ self.eps = eps
+        try:
+            self.eps = float(eps)
+        except Exception:
+            self.eps = 1e-6
 
     def forward(self, pred: torch.Tensor, gt, mask, weights=None):
         '''
@@ -49,7 +53,11 @@ class LeakyDiceLoss(nn.Module):
     '''
     def __init__(self, eps=1e-6, coverage_scale=5.0):
         super(LeakyDiceLoss, self).__init__()
-        self.eps = eps
+        # @@ self.eps = eps
+        try:
+            self.eps = float(eps)
+        except Exception:
+            self.eps = 1e-6
         self.coverage_scale = coverage_scale
 
     def forward(self, pred, gt, mask):
@@ -91,7 +99,12 @@ class InstanceDiceLoss(DiceLoss):
             self.reduction = 'mean'
         assert self.reduction in self.REDUCTION
         self.max_regions = max_regions
-        self.eps = eps
+        # @@ self.eps = eps
+        try:
+            self.eps = float(eps)
+        except Exception:
+            self.eps = 1e-6
+
 
     def label(self, tensor_on_gpu, blur=None):
         '''

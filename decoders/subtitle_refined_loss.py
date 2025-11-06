@@ -7,6 +7,8 @@ Uses geometric cues (tilt, wobble) to identify subtitle-like regions from thresh
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+import cv2
 
 
 class SubtitleRefinedL1BalanceCELoss(nn.Module):
@@ -51,6 +53,16 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
         # Auxiliary negative BCE on non-subtitle areas
         self.negative_bce_alpha = negative_bce_alpha
     
+    def _to_tensor(self, value, device, dtype=torch.float32):
+        if isinstance(value, torch.Tensor):
+            return value.to(device=device, dtype=dtype)
+        if isinstance(value, np.ndarray):
+            return torch.from_numpy(value).to(device=device, dtype=dtype)
+        if isinstance(value, (list, tuple)):
+            tensors = [self._to_tensor(v, device, dtype) for v in value]
+            return torch.stack(tensors, dim=0)
+        return torch.as_tensor(value, device=device, dtype=dtype)
+
     def compute_subtitle_mask(self, thresh_binary, mask, polygons_list=None, ignore_tags_list=None, images=None):
         """
         Compute subtitle mask from thresh_binary based on geometric cues.
@@ -62,6 +74,13 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
         Returns:
             subtitle_mask: (N, H, W) mask for subtitle-like regions only
         """
+        # Ensure mask is torch tensor on the same device/dtype as thresh_binary
+        device = thresh_binary.device if torch.is_tensor(thresh_binary) else torch.device('cpu')
+        dtype = thresh_binary.dtype if torch.is_tensor(thresh_binary) else torch.float32
+        mask = self._to_tensor(mask, device=device, dtype=dtype)
+        if mask.dim() == 4 and mask.size(1) == 1:
+            mask = mask[:, 0]
+
         if not self.enable_subtitle_filter or thresh_binary is None:
             return mask
         
@@ -103,8 +122,6 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
                             pass
                     try:
                         # compute bounding box on CPU (lightweight) and clip
-                        import numpy as np  # local import to avoid global dependency if unused
-                        import cv2
                         if not isinstance(poly, np.ndarray):
                             poly = np.array(poly)
                         x_coords = poly[:, 0]
@@ -279,33 +296,44 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
         """
         if 'thresh' in pred and 'thresh_binary' in pred:
             # Compute subtitle mask from thresh_binary (pred 기반 필터링)
+            device = pred['binary'].device
+            dtype = pred['binary'].dtype
+            mask_tensor = self._to_tensor(batch['mask'], device=device, dtype=dtype)
+            gt_tensor = self._to_tensor(batch['gt'], device=device, dtype=dtype)
+            thresh_mask_tensor = None
+            if 'thresh_mask' in batch and batch['thresh_mask'] is not None:
+                thresh_mask_tensor = self._to_tensor(batch['thresh_mask'], device=device, dtype=dtype)
+            else:
+                thresh_mask_tensor = mask_tensor
+
             subtitle_mask = self.compute_subtitle_mask(
-                pred['thresh_binary'], batch['mask'],
+                pred['thresh_binary'], mask_tensor,
                 polygons_list=batch.get('polygons', None),
                 ignore_tags_list=batch.get('ignore_tags', None),
                 images=batch.get('image', None))
             
             # Apply subtitle mask to loss calculations
             # Combine with original mask (both must be 1)
-            combined_mask = subtitle_mask * batch['mask']
-            combined_thresh_mask = subtitle_mask * batch['thresh_mask'] if 'thresh_mask' in batch else combined_mask
+            combined_mask = subtitle_mask * mask_tensor
+            combined_thresh_mask = subtitle_mask * thresh_mask_tensor if thresh_mask_tensor is not None else combined_mask
             
             # BCE는 원래 mask 사용, Dice/L1만 subtitle 필터 적용
-            bce_loss = self.bce_loss(pred['binary'], batch['gt'], batch['mask'])
+            bce_loss = self.bce_loss(pred['binary'], gt_tensor, mask_tensor)
             l1_loss, l1_metric = self.l1_loss(
                 pred['thresh'], batch['thresh_map'], combined_thresh_mask)
             dice_loss = self.dice_loss(
-                pred['thresh_binary'], batch['gt'], combined_mask)
+                pred['thresh_binary'], gt_tensor, combined_mask)
             # Auxiliary negative BCE on non-subtitle regions
             bce_neg = None
             if self.negative_bce_alpha is not None and self.negative_bce_alpha > 0:
-                non_sub_mask = (batch['mask'] * (1.0 - subtitle_mask)).clamp(min=0.0, max=1.0)
-                zeros_gt = torch.zeros_like(batch['gt'])
+                non_sub_mask = (mask_tensor * (1.0 - subtitle_mask)).clamp(min=0.0, max=1.0)
+                zeros_gt = torch.zeros_like(gt_tensor)
                 bce_neg = self.bce_loss(pred['binary'], zeros_gt, non_sub_mask)
             
             metrics = dict(bce_loss=bce_loss)
             metrics['thresh_loss'] = dice_loss
-            metrics['subtitle_coverage'] = (combined_mask.sum() / (batch['mask'].sum() + 1e-8)).item()
+            subtitle_coverage = combined_mask.sum() / (mask_tensor.sum() + 1e-8)
+            metrics['subtitle_coverage'] = subtitle_coverage.detach()
             if bce_neg is not None:
                 metrics['bce_neg'] = bce_neg
             
@@ -315,7 +343,9 @@ class SubtitleRefinedL1BalanceCELoss(nn.Module):
             metrics.update(**l1_metric)
         else:
             # Fallback: no subtitle filtering if thresh_binary not available
-            bce_loss = self.bce_loss(pred['binary'], batch['gt'], batch['mask'])
+            mask_tensor = self._to_tensor(batch['mask'], device=device, dtype=dtype)
+            gt_tensor = self._to_tensor(batch['gt'], device=device, dtype=dtype)
+            bce_loss = self.bce_loss(pred['binary'], gt_tensor, mask_tensor)
             metrics = dict(bce_loss=bce_loss)
             loss = bce_loss
         

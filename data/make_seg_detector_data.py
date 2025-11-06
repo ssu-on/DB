@@ -43,8 +43,7 @@ class MakeSegDetectorData(Configurable):
                 ignore_tags[i] = True
             else:                                                                   # 문자 크기가 min_text_size 이상인 경우, 문자 영역을 추출
                 polygon_shape = Polygon(polygon)
-                distance = polygon_shape.area * \           
-                    (1 - np.power(self.shrink_ratio, 2)) / polygon_shape.length     # shrink polygon by shrink_ratio, polygon을 shrink_ratio만큼 축소   
+                distance = (polygon_shape.area * (1 - np.power(self.shrink_ratio, 2)) / polygon_shape.length)    
                 subject = [tuple(l) for l in polygons[i]]
                 padding = pyclipper.PyclipperOffset()
                 padding.AddPath(subject, pyclipper.JT_ROUND, pyclipper.ET_CLOSEDPOLYGON)
