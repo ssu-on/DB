@@ -24,6 +24,7 @@ class SegDetectorRepresenter(Configurable):
             self.dest = cmd['dest']
 
     def represent(self, batch, _pred, is_output_polygon=False):
+        # 시작
         '''
         batch: (image, polygons, ignore_tags
         batch: a dict produced by dataloaders.
@@ -42,10 +43,10 @@ class SegDetectorRepresenter(Configurable):
             pred = _pred[self.dest]
         else:
             pred = _pred
-        segmentation = self.binarize(pred)
+        segmentation = self.binarize(pred)                      # binary map 생성, threshold 넘으면 1
         boxes_batch = []
         scores_batch = []
-        for batch_index in range(images.size(0)):
+        for batch_index in range(images.size(0)):               # inference 하는 image 개수만큼 반복
             height, width = batch['shape'][batch_index]
             if is_output_polygon:
                 boxes, scores = self.polygons_from_bitmap(
@@ -68,33 +69,34 @@ class SegDetectorRepresenter(Configurable):
             whose values are binarized as {0, 1}
         '''
 
-        assert _bitmap.size(0) == 1
-        bitmap = _bitmap.cpu().numpy()[0]  # The first channel
-        pred = pred.cpu().detach().numpy()[0]
+        assert _bitmap.size(0) == 1                                             # binary map 채널 개수 확인
+        bitmap = _bitmap.cpu().numpy()[0]                                       # 텐서를 CPU numpy array로 바꾸고, 첫번째 채널만 선택
+        pred = pred.cpu().detach().numpy()[0]                                   # pred 텐서를 CPU numpy array로 바꾸고, 첫번째 채널만 선택
         height, width = bitmap.shape
         boxes = []
         scores = []
 
+        # OpenCV의 0~255 범위의 8bit로 변환
         contours, _ = cv2.findContours(
             (bitmap*255).astype(np.uint8),
             cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
         for contour in contours[:self.max_candidates]:
-            epsilon = 0.002 * cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, epsilon, True)
-            points = approx.reshape((-1, 2))
-            if points.shape[0] < 4:
+            epsilon = 0.002 * cv2.arcLength(contour, True)                        
+            approx = cv2.approxPolyDP(contour, epsilon, True)                   # Douglas-Peucker algorithm 으로 contour 수 줄이기
+            points = approx.reshape((-1, 2))                           
+            if points.shape[0] < 4: 
                 continue
             # _, sside = self.get_mini_boxes(contour)
             # if sside < self.min_size:
             #     continue
-            score = self.box_score_fast(pred, points.reshape(-1, 2))
-            if self.box_thresh > score:
+            score = self.box_score_fast(pred, points.reshape(-1, 2))            # pred의 p-map에서 해당 polygon 내의 score 계산; 픽셀들의 평균 값
+            if self.box_thresh > score:                                         # box_thresh: 0.7
                 continue
             
             if points.shape[0] > 2:
-                box = self.unclip(points, unclip_ratio=2.0)
-                if len(box) > 1:
+                box = self.unclip(points, unclip_ratio=2.0)                     # contour를 바깥쪽으로 확장, 텍스트 경계를 좀 더 여유 있게 잡아 줌
+                if len(box) > 1:                                                # @@ unlcip 사용 시 2개로 쪼개지는 경우?
                     continue
             else:
                 continue

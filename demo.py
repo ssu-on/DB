@@ -46,11 +46,11 @@ def main():
 class Demo:
     def __init__(self, experiment, args, cmd=dict()):
         self.RGB_MEAN = np.array([122.67891434, 116.66876762, 104.00698793])
-        self.experiment = experiment
+        self.experiment = experiment                                            # experiment mode로 load
         experiment.load('evaluation', **args)
-        self.args = cmd
+        self.args = cmd                                                         # model path, config
         model_saver = experiment.train.model_saver
-        self.structure = experiment.structure
+        self.structure = experiment.structure                                           
         self.model_path = self.args['resume']
 
     def init_torch_tensor(self):
@@ -96,6 +96,7 @@ class Demo:
         img = torch.from_numpy(img).permute(2, 0, 1).float().unsqueeze(0)
         return img, original_shape
         
+    # inference result -> txt file
     def format_output(self, batch, output):
         batch_boxes, batch_scores = output
         for index in range(batch['image'].size(0)):
@@ -105,7 +106,7 @@ class Demo:
             result_file_path = os.path.join(self.args['result_dir'], result_file_name)
             boxes = batch_boxes[index]
             scores = batch_scores[index]
-            if self.args['polygon']:
+            if self.args['polygon']:                                    # polygon의 모든 꼭짓점 좌표 저장
                 with open(result_file_path, 'wt') as res:
                     for i, box in enumerate(boxes):
                         box = np.array(box).reshape(-1).tolist()
@@ -121,28 +122,44 @@ class Demo:
                         box = boxes[i,:,:].reshape(-1).tolist()
                         result = ",".join([str(int(x)) for x in box])
                         res.write(result + ',' + str(score) + "\n")
-        
-    def inference(self, image_path, visualize=False):
-        self.init_torch_tensor()
-        model = self.init_model()
-        self.resume(model, self.model_path)
-        all_matircs = {}
-        model.eval()
-        batch = dict()
-        batch['filename'] = [image_path]
-        img, original_shape = self.load_image(image_path)
-        batch['shape'] = [original_shape]
-        with torch.no_grad():
-            batch['image'] = img
-            pred = model.forward(batch, training=False)
-            output = self.structure.representer.represent(batch, pred, is_output_polygon=self.args['polygon']) 
-            if not os.path.isdir(self.args['result_dir']):
-                os.mkdir(self.args['result_dir'])
-            self.format_output(batch, output)
 
-            if visualize and self.structure.visualizer:
-                vis_image = self.structure.visualizer.demo_visualize(image_path, output)
-                cv2.imwrite(os.path.join(self.args['result_dir'], image_path.split('/')[-1].split('.')[0]+'.jpg'), vis_image)
+    def inference(self, image_path, visualize=False):
+        self.init_torch_tensor()                                                # GPU 사용 여부 설정            
+        model = self.init_model()                                               # initialize model            
+        self.resume(model, self.model_path)                                     # load model    
+        all_matircs = {}                                                        # metrics 저장  @@    
+        model.eval()                                                            # set model to evaluation mode    
+        batch = dict()                                                          
+        batch['filename'] = [image_path]
+        img, original_shape = self.load_image(image_path)                       # load image and original shape
+        batch['shape'] = [original_shape]
+
+        # ---------------------------------------------
+        # estimate FPS
+        torch.cuda.synchronize() if torch.cuda.is_available() else None
+        start_time = time.time()
+        # ---------------------------------------------
+
+        with torch.no_grad():                                               
+            batch['image'] = img
+            pred = model.forward(batch, training=False)                         # train을 통해 binary, thresh map을 얻음
+            output = self.structure.representer.represent(batch, pred, is_output_polygon=self.args['polygon'])  # post-processing
+
+        # ---------------------------------------------
+        torch.cuda.synchronize() if torch.cuda.is_available() else None
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        fps = 1.0 / elapsed_time
+        print(f"[INFO] Inference Time: {elapsed_time * 1000:.2f} ms  ({fps:.2f} FPS)")
+        # ---------------------------------------------
+        
+        if not os.path.isdir(self.args['result_dir']):
+            os.mkdir(self.args['result_dir'])
+        self.format_output(batch, output)
+
+        if visualize and self.structure.visualizer:
+            vis_image = self.structure.visualizer.demo_visualize(image_path, output)
+            cv2.imwrite(os.path.join(self.args['result_dir'], image_path.split('/')[-1].split('.')[0]+'.jpg'), vis_image)
 
 if __name__ == '__main__':
     main()
