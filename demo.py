@@ -7,6 +7,7 @@ import numpy as np
 from experiment import Structure, Experiment
 from concern.config import Configurable, Config
 import math
+import time
 
 def main():
     parser = argparse.ArgumentParser(description='Text Recognition Training')
@@ -133,7 +134,14 @@ class Demo:
         batch['filename'] = [image_path]
         img, original_shape = self.load_image(image_path)                       # load image and original shape
         batch['shape'] = [original_shape]
+        batch['image'] = img
 
+        # ---------------------------------------------
+        # # warm-up
+        for _ in range(5):
+            with torch.no_grad():
+                _ = model.forward(batch, training=False)
+        
         # ---------------------------------------------
         # estimate FPS
         torch.cuda.synchronize() if torch.cuda.is_available() else None
@@ -141,10 +149,13 @@ class Demo:
         # ---------------------------------------------
 
         with torch.no_grad():                                               
-            batch['image'] = img
+            # @@ batch['image'] = img
             pred = model.forward(batch, training=False)                         # train을 통해 binary, thresh map을 얻음
+            torch.cuda.synchronize() if torch.cuda.is_available() else None
+            end_time = time.time()
             output = self.structure.representer.represent(batch, pred, is_output_polygon=self.args['polygon'])  # post-processing
 
+        print("hello")
         # ---------------------------------------------
         torch.cuda.synchronize() if torch.cuda.is_available() else None
         end_time = time.time()
