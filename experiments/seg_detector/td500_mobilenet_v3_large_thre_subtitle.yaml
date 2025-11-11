@@ -25,7 +25,7 @@ define:
                     wobble_threshold: 5.0
                     binary_threshold: 0.5
                     color_variance_threshold: 0.2
-                    enable_subtitle_filter: false
+                    enable_subtitle_filter: true
         representer:
             class: SegDetectorRepresenter
             max_candidates: 1000
@@ -61,9 +61,9 @@ define:
                 weight_decay: 0.0001
             learning_rate:  
                 class: DecayLearningRate
-                epochs: 100
+                epochs: 1100
                 warmup_steps: 2000
-        epochs: 100
+        epochs: 1100
 
     validation: &validate
         class: ValidationSettings

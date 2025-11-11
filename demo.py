@@ -138,7 +138,7 @@ class Demo:
 
         # ---------------------------------------------
         # # warm-up
-        for _ in range(5):
+        for _ in range(20):
             with torch.no_grad():
                 _ = model.forward(batch, training=False)
         
@@ -151,11 +151,8 @@ class Demo:
         with torch.no_grad():                                               
             # @@ batch['image'] = img
             pred = model.forward(batch, training=False)                         # train을 통해 binary, thresh map을 얻음
-            torch.cuda.synchronize() if torch.cuda.is_available() else None
-            end_time = time.time()
             output = self.structure.representer.represent(batch, pred, is_output_polygon=self.args['polygon'])  # post-processing
 
-        print("hello")
         # ---------------------------------------------
         torch.cuda.synchronize() if torch.cuda.is_available() else None
         end_time = time.time()
