@@ -38,9 +38,10 @@ class Trainer:
         lr = self.experiment.train.scheduler.learning_rate.get_learning_rate(
             epoch, step)
 
-        warmup_steps = getattr(self.experiment.train.scheduler.learning_rate, 'warmup_steps', 0)
-        if warmup_steps and step < warmup_steps:
-            lr = lr * (step / float(warmup_steps))  # linear warmup
+        # @@
+        # warmup_steps = getattr(self.experiment.train.scheduler.learning_rate, 'warmup_steps', 0)
+        # if warmup_steps and step < warmup_steps:
+        #     lr = lr * (step / float(warmup_steps))  # linear warmup
         for group in optimizer.param_groups:
             group['lr'] = lr
         self.current_lr = lr
