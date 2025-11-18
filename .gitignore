@@ -111,6 +111,11 @@ log.txt # From the naive evaluating of ICDAR15
 
 # specific directory
 datasets
+assets
+test
+model
+tools
+tmp_dump
 evaluation
 experiments/backup
 lib

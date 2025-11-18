@@ -16,7 +16,19 @@ define:
                     adaptive: True
                     in_channels: [64, 128, 256, 512]
                     k: 50
-                loss_class: L1BalanceCELoss
+                    enable_color_embedding: True
+                    color_embed_dim: 16
+                    color_normalize: True
+                loss_class: SubtitleColorConsistencyLoss
+                loss_kwargs:
+                    lambda_inter: 0.4
+                    margin: 0.6
+                    refine_sigma: 0.25
+                    refine_threshold: 0.15
+                    min_pixels: 16
+                    binary_threshold: 0.5
+                    use_binary_mask: true
+                    use_subtitle_mask: true
 
         representer:
             class: SegDetectorRepresenter

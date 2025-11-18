@@ -50,7 +50,7 @@ class Trainer:
         self.logger.report_time('Start')
         self.logger.args(self.experiment)
         model = self.init_model()
-        train_data_loader = self.experiment.train.data_loader
+        train_data_loader = self.experiment.train.data_loader                      # YAML 설정에 따라 구성된 DataLoader 객체 가져옴 
         if self.experiment.validation:
             validation_loaders = self.experiment.validation.data_loaders
 
@@ -73,7 +73,7 @@ class Trainer:
             self.logger.epoch(epoch)
             self.total = len(train_data_loader)
 
-            for batch in train_data_loader:
+            for batch in train_data_loader:                                         # DataLoader에서 배치 단위로 데이터 로드
                 self.update_learning_rate(optimizer, epoch, self.steps)
 
                 self.logger.report_time("Data loading")
