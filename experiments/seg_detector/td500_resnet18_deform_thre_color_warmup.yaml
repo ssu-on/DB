@@ -27,12 +27,11 @@ define:
                     in_channels: [64, 128, 256, 512]
                     k: 50
                     enable_color_embedding: False
-                loss_class: SubtitleRefinedL1BalanceCELoss
+                loss_class: L1BalanceCELoss
                 loss_kwargs:
                     binary_threshold: 0.5
-                    enable_subtitle_filter: True
+                    enable_subtitle_filter: False
                     enable_color_check: False
-                    negative_bce_alpha: 0.0
 
         representer:
             class: SegDetectorRepresenter
