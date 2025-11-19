@@ -81,15 +81,15 @@ class SegDetector(nn.Module):
         self.out3.apply(self.weights_init)
         self.out2.apply(self.weights_init)
 
-        # Color embedding related ***************************
-        if self.enable_color_embedding:
-            self.color_head = ColorEmbeddingHead(
-                inner_channels,
-                embed_dim=self.color_embed_dim,
-                bias=bias,
-                normalize=self.color_normalize)
-            self.color_head.apply(self.weights_init)
-        # ***************************************************
+        # # Color embedding related ***************************
+        # if self.enable_color_embedding:
+        #     self.color_head = ColorEmbeddingHead(
+        #         inner_channels,
+        #         embed_dim=self.color_embed_dim,
+        #         bias=bias,
+        #         normalize=self.color_normalize)
+        #     self.color_head.apply(self.weights_init)
+        # # ***************************************************
 
     def weights_init(self, m):
         classname = m.__class__.__name__
@@ -155,7 +155,7 @@ class SegDetector(nn.Module):
         
         color_embedding = None                                          # @@ 각 픽셀마다 추정된 embed_dim의 embedding vector가 들어 있는 tensor. None은 초기값.
         if self.enable_color_embedding:                                 # @@
-            color_embedding = self.color_head(fuse)                     # @@ fuse를 입력으로 각 픽셀마다 추정된 embed_dim의 embedding vector가 들어 있는 tensor
+            color_embedding = fuse #self.color_head(fuse)                     # @@ fuse를 입력으로 각 픽셀마다 추정된 embed_dim의 embedding vector가 들어 있는 tensor
 
         # this is the pred module, not binarization module; 
         # We do not correct the name due to the trained model.
