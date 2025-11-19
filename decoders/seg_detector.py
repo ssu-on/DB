@@ -2,6 +2,7 @@ from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .color_embedding_head import ColorEmbeddingHead
 
@@ -81,15 +82,15 @@ class SegDetector(nn.Module):
         self.out3.apply(self.weights_init)
         self.out2.apply(self.weights_init)
 
-        # # Color embedding related ***************************
-        # if self.enable_color_embedding:
-        #     self.color_head = ColorEmbeddingHead(
-        #         inner_channels,
-        #         embed_dim=self.color_embed_dim,
-        #         bias=bias,
-        #         normalize=self.color_normalize)
-        #     self.color_head.apply(self.weights_init)
-        # # ***************************************************
+        # Color embedding related ***************************
+        if self.enable_color_embedding:
+            self.color_head = ColorEmbeddingHead(
+                inner_channels,
+                embed_dim=self.color_embed_dim,
+                bias=bias,
+                normalize=self.color_normalize)
+            self.color_head.apply(self.weights_init)
+        # ***************************************************
 
     def weights_init(self, m):
         classname = m.__class__.__name__
@@ -153,19 +154,23 @@ class SegDetector(nn.Module):
 
         fuse = torch.cat((p5, p4, p3, p2), 1)                           # 다중 스케일 feauture map
         
+        color_embedding = None                                          # @@ 각 픽셀마다 추정된 embed_dim의 embedding vector가 들어 있는 tensor. None은 초기값.
+        if self.enable_color_embedding:                                 # @@
+            color_embedding = self.color_head(fuse)                     # @@ fuse를 입력으로 각 픽셀마다 추정된 embed_dim의 embedding vector가 들어 있는 tensor
+            
         # this is the pred module, not binarization module; 
         # We do not correct the name due to the trained model.
         binary = self.binarize(fuse)                                    # 결합된 특징 (fuse)를 입력으로 p-map(biinary) 생성
 
-        color_embedding = None                                          # @@ 각 픽셀마다 추정된 embed_dim의 embedding vector가 들어 있는 tensor. None은 초기값.
-        if self.enable_color_embedding:                                 # @@
-            color_embedding = F.interpolate(
-                fuse,
-                size=binary.shape[-2:],
-                mode='bilinear',
-                align_corners=False)
-            if self.color_normalize:
-                color_embedding = F.normalize(color_embedding, p=2, dim=1, eps=1e-6)
+        # color_embedding = None                                          # @@ 각 픽셀마다 추정된 embed_dim의 embedding vector가 들어 있는 tensor. None은 초기값.
+        # if self.enable_color_embedding:                                 # @@
+        #     color_embedding = F.interpolate(
+        #         fuse,
+        #         size=binary.shape[-2:],
+        #         mode='bilinear',
+        #         align_corners=False)
+        #     if self.color_normalize:
+        #         color_embedding = F.normalize(color_embedding, p=2, dim=1, eps=1e-6)
 
         # if self.training:                                             # train 모드에서는 binary, color_embedding 모두 반환
         #     result = OrderedDict(binary=binary)                       # 이후에 thresh, thresh_binary를 추가하기 위해 딕셔너리 형태로 만듦. loss 계산 시 pred가 dict 형태여야 함 (e.g., {'binary': binary, 'thresh': thresh, 'thresh_binary': thresh_binary})
