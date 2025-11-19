@@ -125,6 +125,9 @@ class SubtitleColorConsistencyLoss(nn.Module):
 
         device = color_embedding.device
         dtype = color_embedding.dtype
+        
+        assert color_embedding.shape[-2:] == gt_tensor.shape[-2:], \
+            f"mismatch: {color_embedding.shape[-2:]} vs {gt_tensor.shape[-2:]}"
 
         gt_mask = (gt_tensor > self.gt_threshold).float()                   # 0 또는 1
         if gt_mask.dim() == 4:
