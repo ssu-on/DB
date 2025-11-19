@@ -182,7 +182,8 @@ class L1BalanceCELoss(nn.Module):
     Note: The meaning of inputs can be figured out in `SegDetectorLossBuilder`.
     '''
 
-    def __init__(self, eps=1e-6, l1_scale=10, bce_scale=5):
+    #def __init__(self, eps=1e-6, l1_scale=10, bce_scale=5):
+    def __init__(self, eps=1e-6, l1_scale=10, bce_scale=5, **kwargs):
         super(L1BalanceCELoss, self).__init__()
         from .dice_loss import DiceLoss
         from .l1_loss import MaskL1Loss
@@ -247,7 +248,7 @@ class L1LeakyDiceLoss(nn.Module):
     MaskL1Loss on thresh,
     DiceLoss on thresh_binary.
     '''
-
+    
     def __init__(self, eps=1e-6, coverage_scale=5, l1_scale=10):
         super(L1LeakyDiceLoss, self).__init__()
         from .dice_loss import DiceLoss, LeakyDiceLoss
