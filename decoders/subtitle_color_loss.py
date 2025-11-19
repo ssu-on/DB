@@ -19,8 +19,8 @@ class SubtitleColorConsistencyLoss(nn.Module):
     def __init__(self,
                  lambda_inter: float = 0.4,
                  margin: float = 0.5,
-                 refine_sigma: float = 0.25,
                  binary_threshold: float = 0.5,
+                 min_pixels: int = 20,
                  eps: float = 1e-6):
         super().__init__()
         self.lambda_inter = lambda_inter
