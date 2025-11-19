@@ -1,10 +1,10 @@
 from typing import Optional
 
-import cv2
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import cv2
+import numpy as np
 
 
 class SubtitleColorConsistencyLoss(nn.Module):
