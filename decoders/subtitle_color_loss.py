@@ -136,22 +136,30 @@ class SubtitleColorConsistencyLoss(nn.Module):
         valid_mask = (mask_tensor > 0.5).float()                            # 0 또는 1
 
         base_mask = gt_mask.clone()
+        base_mask_sum_before = base_mask.sum().item()
+        valid_mask_sum = valid_mask.sum().item()
+        #print(f"[DEBUG][SubtitleColorLoss] base_mask_before={base_mask_sum_before:.1f}, valid_mask={valid_mask_sum:.1f}")
 
+        binary_mask = None
         if self.use_binary_mask and binary_pred is not None:
             binary_mask = (binary_pred.detach() > self.binary_threshold).float()    # 여기서의 값이 binary_pred에 영향을 주면 안됨
             if binary_mask.dim() == 4:
                 binary_mask = binary_mask.squeeze(1)
+            #print(f"[DEBUG][SubtitleColorLoss] binary_mask_sum={binary_mask.sum().item():.1f}")
             base_mask = torch.maximum(base_mask, binary_mask)                       # GT shrink mask, binary mask
 
         if self.use_subtitle_mask and subtitle_mask is not None:
             if subtitle_mask.dim() == 4 and subtitle_mask.size(1) == 1:
                 subtitle_mask = subtitle_mask[:, 0]
             subtitle_mask = subtitle_mask.to(device=device, dtype=base_mask.dtype)
-            base_mask = torch.maximum(base_mask, subtitle_mask)                     # GT shrink mask, binary maks, subtitle mask 
+            base_mask = torch.maximum(base_mask, subtitle_mask)                     # GT shrink mask, binary mask, subtitle mask 
 
         base_mask = (base_mask > 0).float() * valid_mask                            # initialize mask, 학습에서 무시할 영역 제외
         background_mask = (valid_mask - base_mask).clamp(min=0.0)                   # background mask, 학습에서 무시할 영역 제외
 
+        base_mask_sum_after = base_mask.sum().item()
+        #print(f"[DEBUG][SubtitleColorLoss] base_mask_after={base_mask_sum_after:.1f}")
+        
         total_components = 0
         intra_accum = color_embedding.new_zeros(())                        
         inter_accum = color_embedding.new_zeros(())
@@ -169,10 +177,15 @@ class SubtitleColorConsistencyLoss(nn.Module):
             embedding_b = color_embedding[b]
             bg_mask_b = background_mask[b]
             mu_bg = None
+            bg_count = bg_mask_b.sum().item()
+            #if torch.isnan(bg_mask_b).any():
+                #print(f"[DEBUG][SubtitleColorLoss] NaN detected in background mask at sample {b}")
+            #print(f"[DEBUG][SubtitleColorLoss] sample={b}, background_pixels={bg_count:.1f}")
             # 먼저 background mean을 계산
-            if bg_mask_b.sum() > self.min_pixels:
+            if bg_count > self.min_pixels:
                 mu_bg = self._masked_mean(embedding_b, bg_mask_b)
-
+            else:
+                print(f"[DEBUG][SubtitleColorLoss] skip inter (background too small, min={self.min_pixels})")
             valid_mask_b = valid_mask[b]
 
             for comp_mask in components:

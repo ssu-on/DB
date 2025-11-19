@@ -38,7 +38,7 @@ define:
                     min_pixels: 16
                     binary_threshold: 0.5
                     use_binary_mask: true
-                    use_subtitle_mask: true
+                    use_subtitle_mask: false
 
         representer:
             class: SegDetectorRepresenter
