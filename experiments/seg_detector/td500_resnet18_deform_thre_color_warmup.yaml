@@ -7,11 +7,11 @@ define:
     data_dir:
       - './datasets/TD_TR/TD500/'
       - './datasets/TD_TR/TR400/'
-      - './datasets/Subtitles'
+      #- './datasets/Subtitles'
     data_list:
       - './datasets/TD_TR/TD500/train_list.txt'
       - './datasets/TD_TR/TR400/train_list.txt'
-      - './datasets/Subtitles/train_list.txt'
+      #- './datasets/Subtitles/train_list.txt'
   - name: 'Experiment'
     class: Experiment
     structure: 
