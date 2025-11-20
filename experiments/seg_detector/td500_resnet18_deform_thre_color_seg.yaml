@@ -5,13 +5,19 @@ define:
   - name: train_data
     base: train_data
     data_dir:
-      - './datasets/TD_TR/TD500/'
-      - './datasets/TD_TR/TR400/'
+    #   - './datasets/TD_TR/TD500/'
+    #   - './datasets/TD_TR/TR400/'
       - './datasets/Subtitles'
     data_list:
-      - './datasets/TD_TR/TD500/train_list.txt'
-      - './datasets/TD_TR/TR400/train_list.txt'
+    #   - './datasets/TD_TR/TD500/train_list.txt'
+    #   - './datasets/TD_TR/TR400/train_list.txt'
       - './datasets/Subtitles/train_list.txt'
+  - name: validate_data
+    base: validate_data
+    data_dir:
+      - './datasets/Subtitles'
+    data_list:
+      - './datasets/Subtitles/test_list.txt'
   - name: 'Experiment'
     class: Experiment
     structure: 
