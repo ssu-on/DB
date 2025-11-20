@@ -37,6 +37,7 @@ define:
                     #refine_threshold: 0.15
                     min_pixels: 20
                     binary_threshold: 0.5
+                    bce_weight: 0.1
                     #use_binary_mask: true
                     #use_subtitle_mask: false
 
