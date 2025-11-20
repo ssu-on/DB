@@ -33,12 +33,12 @@ define:
                 loss_kwargs:
                     lambda_inter: 0.4
                     margin: 0.6
-                    refine_sigma: 0.25
-                    refine_threshold: 0.15
-                    min_pixels: 16
+                    #refine_sigma: 0.25
+                    #refine_threshold: 0.15
+                    min_pixels: 20
                     binary_threshold: 0.5
-                    use_binary_mask: true
-                    use_subtitle_mask: false
+                    #use_binary_mask: true
+                    #use_subtitle_mask: false
 
         representer:
             class: SegDetectorRepresenter
@@ -62,7 +62,7 @@ define:
         model_saver: 
             class: ModelSaver
             dir_path: model
-            save_interval: 18000
+            save_interval: 5000
             signal_path: save
         scheduler: 
             class: OptimizerScheduler
