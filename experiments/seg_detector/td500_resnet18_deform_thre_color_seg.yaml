@@ -29,6 +29,7 @@ define:
                     enable_color_embedding: True
                     color_embed_dim: 16
                     color_normalize: True
+                freeze_except_color_head: true
                 loss_class: SubtitleColorConsistencyLoss
                 loss_kwargs:
                     lambda_inter: 0.4
@@ -37,7 +38,6 @@ define:
                     #refine_threshold: 0.15
                     min_pixels: 20
                     binary_threshold: 0.5
-                    bce_weight: 0.1
                     #use_binary_mask: true
                     #use_subtitle_mask: false
 

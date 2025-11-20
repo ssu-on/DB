@@ -4,8 +4,6 @@ import torch.nn.functional as F
 import cv2
 import numpy as np
 
-from .balance_cross_entropy_loss import BalanceCrossEntropyLoss
-
 class SubtitleColorConsistencyLoss(nn.Module):
     """
     Self-refined color embedding consistency loss.
@@ -20,7 +18,6 @@ class SubtitleColorConsistencyLoss(nn.Module):
                  margin: float = 0.5,
                  binary_threshold: float = 0.5,
                  min_pixels: int = 20,
-                 bce_weight: float = 0.05,
                  eps: float = 1e-6):
         super().__init__()
         self.lambda_inter = lambda_inter
@@ -28,42 +25,16 @@ class SubtitleColorConsistencyLoss(nn.Module):
         self.min_pixels = min_pixels
         self.binary_threshold = binary_threshold
         self.eps = eps
-        self.bce_weight = float(bce_weight)
-        self.bce_loss = BalanceCrossEntropyLoss() if self.bce_weight > 0 else None
 
     def forward(self, pred, batch):
         color = pred['color_embedding']          # (N, 16, H, W)
-        binary = pred['binary']                  # (N, 1, H, W)
+        gt = batch['gt']                         # (N, 1, H, W)
         
-        subtitle_mask = (binary > self.binary_threshold).float()
+        subtitle_mask = (gt > self.binary_threshold).float()
         subtitle_mask = subtitle_mask.squeeze(1)            # (N,H,W)
 
         bg_mask = 1.0 - subtitle_mask                       # (N,H,W)
-        color_loss, metrics = self._compute_loss(color, subtitle_mask, bg_mask)
-
-        total_loss = color_loss
-        if self.bce_loss is not None:
-            gt = self._to_tensor(batch.get('gt'), device=binary.device, dtype=binary.dtype)
-            mask = self._to_tensor(batch.get('mask'), device=binary.device, dtype=binary.dtype)
-            if gt is None or mask is None:
-                raise ValueError("Batch must include 'gt' and 'mask' when BCE regularization is enabled.")
-            bce_loss = self.bce_loss(binary, gt, mask)
-            total_loss = total_loss + self.bce_weight * bce_loss
-            metrics['bce_loss'] = bce_loss.detach()
-            metrics['bce_weight'] = torch.tensor(self.bce_weight, device=binary.device)
-
-        metrics['color_total'] = total_loss.detach()
-        return total_loss, metrics
-
-    def _to_tensor(self, value, device, dtype):
-        if value is None:
-            return None
-        if isinstance(value, torch.Tensor):
-            return value.to(device=device, dtype=dtype)
-        if isinstance(value, np.ndarray):
-            return torch.from_numpy(value).to(device=device, dtype=dtype)
-        return torch.as_tensor(value, device=device, dtype=dtype)
-
+        return self._compute_loss(color, subtitle_mask, bg_mask)
 
 
 
