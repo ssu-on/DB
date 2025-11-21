@@ -2,6 +2,7 @@ import sys
 
 import torch
 import torch.nn as nn
+import numpy as np
 
 # Import SubtitleRefinedL1BalanceCELoss from subtitle_refined_loss module
 from .subtitle_refined_loss import SubtitleRefinedL1BalanceCELoss
@@ -315,6 +316,17 @@ class SubtitleBranchLoss(nn.Module):
         # Color embedding loss
         self.color_loss = SubtitleColorConsistencyLoss(**kwargs.get('color_kwargs', {}))
     
+    def _to_tensor(self, value, device, dtype=torch.float32):
+        """Convert various input types to torch.Tensor."""
+        if isinstance(value, torch.Tensor):
+            return value.to(device=device, dtype=dtype)
+        if isinstance(value, np.ndarray):
+            return torch.from_numpy(value).to(device=device, dtype=dtype)
+        if isinstance(value, (list, tuple)):
+            tensors = [self._to_tensor(v, device, dtype) for v in value]
+            return torch.stack(tensors, dim=0)
+        return torch.as_tensor(value, device=device, dtype=dtype)
+    
     def forward(self, pred, batch):
         """
         Args:
@@ -332,8 +344,18 @@ class SubtitleBranchLoss(nn.Module):
         
         subtitle_binary = pred['subtitle_binary']
         subtitle_color_embedding = pred['subtitle_color_embedding']
-        gt = batch['gt']
-        mask = batch['mask']
+        
+        # Convert batch values to tensors (handle list/numpy array inputs)
+        device = subtitle_binary.device
+        dtype = subtitle_binary.dtype
+        gt = self._to_tensor(batch['gt'], device=device, dtype=dtype)
+        mask = self._to_tensor(batch['mask'], device=device, dtype=dtype)
+        
+        # Ensure gt has shape (N, 1, H, W) and mask has shape (N, H, W)
+        if gt.dim() == 3:
+            gt = gt.unsqueeze(1)  # (N, H, W) -> (N, 1, H, W)
+        if mask.dim() == 4 and mask.size(1) == 1:
+            mask = mask[:, 0]  # (N, 1, H, W) -> (N, H, W)
         
         # Compute binary loss
         if self.binary_loss_type == 'bce':
