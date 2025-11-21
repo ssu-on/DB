@@ -123,3 +123,5 @@ class SubtitleColorConsistencyLoss(nn.Module):
         }
 
         return loss, metrics
+
+
