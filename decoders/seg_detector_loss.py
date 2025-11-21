@@ -357,6 +357,11 @@ class SubtitleBranchLoss(nn.Module):
         if mask.dim() == 4 and mask.size(1) == 1:
             mask = mask[:, 0]  # (N, 1, H, W) -> (N, H, W)
         
+        # Update batch with tensor values so color_loss receives tensors
+        batch_for_color = batch.copy()
+        batch_for_color['gt'] = gt
+        batch_for_color['mask'] = mask
+        
         # Compute binary loss
         if self.binary_loss_type == 'bce':
             binary_loss = self.binary_loss(subtitle_binary, gt, mask)
@@ -369,9 +374,9 @@ class SubtitleBranchLoss(nn.Module):
         else:
             raise ValueError(f"Invalid binary_loss_type: {self.binary_loss_type}")
         
-        # Compute color embedding loss
+        # Compute color embedding loss (use updated batch with tensors)
         color_pred = {'color_embedding': subtitle_color_embedding}
-        color_loss, color_metrics = self.color_loss(color_pred, batch)
+        color_loss, color_metrics = self.color_loss(color_pred, batch_for_color)
         
         # Combine losses
         total_loss = binary_loss + self.lambda_color * color_loss
