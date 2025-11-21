@@ -35,7 +35,7 @@ define:
                     enable_color_embedding: True
                     color_embed_dim: 16
                     color_normalize: True
-                freeze_except_color_head: true
+                freeze_except_color_head: false
                 loss_class: SubtitleColorConsistencyLoss
                 loss_kwargs:
                     lambda_inter: 0.4
