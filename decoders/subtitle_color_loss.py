@@ -69,7 +69,7 @@ class SubtitleColorConsistencyLoss(nn.Module):
         total = 0
         intra_sum = color.new_zeros(())
         inter_sum = color.new_zeros(())
-        geom_sum = color.new_zeros(())
+        #geom_sum = color.new_zeros(())
 
         for b in range(N):
             feat = color[b]
@@ -99,35 +99,35 @@ class SubtitleColorConsistencyLoss(nn.Module):
                 inter = F.relu(self.margin - dist) ** 2
 
                 # geometry loss
-                ys, xs = torch.nonzero(comp, as_tuple=True)
-                ys = ys.float()
-                xs = xs.float()
+                # ys, xs = torch.nonzero(comp, as_tuple=True)
+                # ys = ys.float()
+                # xs = xs.float()
 
-                # --- Orientation ---
-                A = torch.stack([xs, torch.ones_like(xs)], dim=1)
-                xTx = A.T @ A
-                xTy = A.T @ ys
-                params = torch.linalg.solve(xTx, xTy)
-                slope = params[0]
-                angle = torch.atan(slope)
-                orient_penalty = torch.abs(angle)
+                # # --- Orientation ---
+                # A = torch.stack([xs, torch.ones_like(xs)], dim=1)
+                # xTx = A.T @ A
+                # xTy = A.T @ ys
+                # params = torch.linalg.solve(xTx, xTy)
+                # slope = params[0]
+                # angle = torch.atan(slope)
+                # orient_penalty = torch.abs(angle)
                 
-                # --- Centerline flatness ---
-                unique_x = torch.unique(xs)
-                center_ys = []
-                for x in unique_x:
-                    ys_at_x = ys[xs == x]
-                    y_center = (ys_at_x.min() + ys_at_x.max()) / 2.0
-                    center_ys.append(y_center)
-                center_ys = torch.stack(center_ys)
-                flat_penalty = center_ys.std()
+                # # --- Centerline flatness ---
+                # unique_x = torch.unique(xs)
+                # center_ys = []
+                # for x in unique_x:
+                #     ys_at_x = ys[xs == x]
+                #     y_center = (ys_at_x.min() + ys_at_x.max()) / 2.0
+                #     center_ys.append(y_center)
+                # center_ys = torch.stack(center_ys)
+                # flat_penalty = center_ys.std()
 
-                geom = orient_penalty + flat_penalty
+                # geom = orient_penalty + flat_penalty
 
                 # sum up losses
                 intra_sum += intra
                 inter_sum += inter
-                geom_sum += geom
+                #geom_sum += geom
                 total += 1
 
         if total == 0:
@@ -136,21 +136,21 @@ class SubtitleColorConsistencyLoss(nn.Module):
                 'color_loss': zero,
                 'color_intra': zero,
                 'color_inter': zero,
-                'color_geom': zero,
+                #'color_geom': zero,
                 'components': color.new_tensor(0.0)
             }
             return zero, metrics
         
         intra_avg = intra_sum / total
         inter_avg = inter_sum / total
-        geom_avg = geom_sum / total
-        loss = intra_avg + self.lambda_inter * inter_avg  + 0.1 * geom_avg
+        #geom_avg = geom_sum / total
+        loss = intra_avg + self.lambda_inter * inter_avg # + 0.1 * geom_avg
 
         metrics = {
             'color_loss': loss,
             'color_intra': intra_avg.detach(),
             'color_inter': inter_avg.detach(),
-            'color_geom': geom_avg.detach(),
+            #'color_geom': geom_avg.detach(),
             'components': color.new_tensor(float(total))
         }
 

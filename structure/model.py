@@ -74,7 +74,7 @@ class SegDetectorModel(nn.Module):
             return loss, pred, metrics
         return pred
 
-# # @@ for backbone freeze
+# @@ for backbone freeze
     def train(self, mode: bool = True):
         super().train(mode)
         if self.freeze_except_color_head:
