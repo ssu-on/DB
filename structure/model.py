@@ -34,18 +34,16 @@ class SegDetectorModel(nn.Module):
         super(SegDetectorModel, self).__init__()
         from decoders.seg_detector_loss import SegDetectorLossBuilder
 
-        # @@ self.model = BasicModel(args) (not freeze)
-        self.model = BasicModel(args) 
+        # Subtitle branch freeze mode: freeze backbone/fuse, train only subtitle branch
+        self.freeze_for_subtitle_branch = bool(args.get('freeze_for_subtitle_branch', False))
         
-        # self.freeze_except_color_head = bool(args.get('freeze_except_color_head', False))
-        # base_model = BasicModel(args)
-        # if self.freeze_except_color_head:
-        #     self._freeze_except_color_head(base_model, require_color_head=args.get('decoder_args', {}).get('enable_color_embedding', False))
+        self.model = BasicModel(args)
+        
+        if self.freeze_for_subtitle_branch:
+            self._freeze_for_subtitle_branch(self.model)
         
         # for loading models
-        # @@ self.model = parallelize(self.model, distributed, local_rank) (not freeze)
         self.model = parallelize(self.model, distributed, local_rank)
-        #self.model = parallelize(base_model, distributed, local_rank)
         self.criterion = SegDetectorLossBuilder(
             args['loss_class'], *args.get('loss_args', []), **args.get('loss_kwargs', {})).build()
         self.criterion = parallelize(self.criterion, distributed, local_rank)
@@ -74,33 +72,65 @@ class SegDetectorModel(nn.Module):
             return loss, pred, metrics
         return pred
 
-# # @@ for backbone freeze
-#     def train(self, mode: bool = True):
-#         super().train(mode)
-#         if self.freeze_except_color_head:
-#             model = self._get_basic_model()
-#             model.backbone.eval()
-#             decoder = model.decoder
-#             for name, module in decoder.named_children():
-#                 if name == 'color_head' and getattr(decoder, 'enable_color_embedding', False):
-#                     module.train(mode)
-#                 else:
-#                     module.eval()
-#         return self
-
-#     def _get_basic_model(self):
-#         if isinstance(self.model, (nn.DataParallel, nn.parallel.DistributedDataParallel)):
-#             return self.model.module
-#         return self.model
-
-#     def _freeze_except_color_head(self, base_model: BasicModel, require_color_head: bool = False):
-#         for param in base_model.backbone.parameters():
-#             param.requires_grad = False
-#         decoder = base_model.decoder
-#         for param in decoder.parameters():
-#             param.requires_grad = False
-#         if getattr(decoder, 'enable_color_embedding', False) and hasattr(decoder, 'color_head'):
-#             for param in decoder.color_head.parameters():
-#                 param.requires_grad = True
-#         elif require_color_head:
-#             raise RuntimeError("freeze_except_color_head is enabled but decoder.color_head is missing.")
+    def _get_basic_model(self):
+        """Get the underlying BasicModel, handling DataParallel/DistributedDataParallel wrapper."""
+        if isinstance(self.model, (nn.DataParallel, nn.parallel.DistributedDataParallel)):
+            return self.model.module
+        return self.model
+    
+    def _freeze_for_subtitle_branch(self, base_model: BasicModel):
+        """
+        Freeze backbone and main decoder (fuse, binary head, etc.),
+        keep only subtitle branch trainable.
+        
+        This is for Stage 2 training where:
+        - backbone/fuse are frozen (pretrained DBNet)
+        - Only subtitle_fuse_branch + subtitle_binary_head + subtitle_color_embed_head are trained
+        """
+        # Freeze backbone
+        for param in base_model.backbone.parameters():
+            param.requires_grad = False
+        
+        decoder = base_model.decoder
+        
+        # Freeze all decoder components by default
+        for param in decoder.parameters():
+            param.requires_grad = False
+        
+        # Unfreeze subtitle branch components
+        if hasattr(decoder, 'enable_subtitle_branch') and decoder.enable_subtitle_branch:
+            if hasattr(decoder, 'subtitle_fuse_branch'):
+                for param in decoder.subtitle_fuse_branch.parameters():
+                    param.requires_grad = True
+            if hasattr(decoder, 'subtitle_binary_head'):
+                for param in decoder.subtitle_binary_head.parameters():
+                    param.requires_grad = True
+            if hasattr(decoder, 'subtitle_color_embed_head'):
+                for param in decoder.subtitle_color_embed_head.parameters():
+                    param.requires_grad = True
+        else:
+            raise RuntimeError(
+                "freeze_for_subtitle_branch is enabled but decoder.enable_subtitle_branch is False. "
+                "Please set enable_subtitle_branch=True in decoder_args.")
+    
+    def train(self, mode: bool = True):
+        """
+        Override train() to maintain freeze state during training.
+        When freeze_for_subtitle_branch is enabled, backbone and main decoder stay in eval mode.
+        """
+        super().train(mode)
+        if self.freeze_for_subtitle_branch:
+            model = self._get_basic_model()
+            # Keep backbone in eval mode
+            model.backbone.eval()
+            
+            decoder = model.decoder
+            # Keep main decoder components in eval mode
+            for name, module in decoder.named_children():
+                if name in ['subtitle_fuse_branch', 'subtitle_binary_head', 'subtitle_color_embed_head']:
+                    # Subtitle branch components: train mode
+                    module.train(mode)
+                else:
+                    # All other components: eval mode (frozen)
+                    module.eval()
+        return self

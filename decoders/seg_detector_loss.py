@@ -268,3 +268,102 @@ class L1LeakyDiceLoss(nn.Module):
         loss = main_loss + thresh_loss + l1_loss * self.l1_scale
         return loss, metrics
 
+# @@ for subtitle branch loss
+class SubtitleBranchLoss(nn.Module):
+    '''
+    Loss function for subtitle branch.
+    
+    Combines:
+    1. Subtitle Binary Loss (BCE/Dice) - direct supervision for subtitle binary map
+    2. Color Embedding Loss - self-refinement for subtitle feature clustering
+    
+    Loss = L_subtitle_binary + λ * L_color_embedding
+    
+    This loss is designed for Stage 2 training where:
+    - backbone/fuse are frozen
+    - Only subtitle_fuse_branch + subtitle_binary_head + subtitle_color_embed_head are trained
+    '''
+    
+    def __init__(self, 
+                 binary_loss_type='bce',  # 'bce', 'dice', or 'bce+dice'
+                 lambda_color=0.3,
+                 eps=1e-6,
+                 **kwargs):
+        super(SubtitleBranchLoss, self).__init__()
+        
+        from .dice_loss import DiceLoss
+        from .balance_cross_entropy_loss import BalanceCrossEntropyLoss
+        from .subtitle_color_loss import SubtitleColorConsistencyLoss
+        
+        self.binary_loss_type = binary_loss_type
+        self.lambda_color = lambda_color
+        
+        # Binary loss components
+        if binary_loss_type == 'bce':
+            self.binary_loss = BalanceCrossEntropyLoss(**kwargs.get('bce_kwargs', {}))
+            self.use_dice = False
+        elif binary_loss_type == 'dice':
+            self.binary_loss = DiceLoss(eps=eps)
+            self.use_dice = True
+        elif binary_loss_type == 'bce+dice':
+            self.bce_loss = BalanceCrossEntropyLoss(**kwargs.get('bce_kwargs', {}))
+            self.dice_loss = DiceLoss(eps=eps)
+            self.use_dice = True
+        else:
+            raise ValueError(f"binary_loss_type must be 'bce', 'dice', or 'bce+dice', got {binary_loss_type}")
+        
+        # Color embedding loss
+        self.color_loss = SubtitleColorConsistencyLoss(**kwargs.get('color_kwargs', {}))
+    
+    def forward(self, pred, batch):
+        """
+        Args:
+            pred: dict containing
+                - subtitle_binary: (N, 1, H, W) subtitle binary prediction
+                - subtitle_color_embedding: (N, C, H, W) subtitle color embedding
+            batch: dict containing
+                - gt: (N, 1, H, W) ground truth subtitle mask
+                - mask: (N, H, W) ignore mask
+        Returns:
+            (loss, metrics) tuple
+        """
+        assert 'subtitle_binary' in pred, "subtitle_binary must be in pred"
+        assert 'subtitle_color_embedding' in pred, "subtitle_color_embedding must be in pred"
+        
+        subtitle_binary = pred['subtitle_binary']
+        subtitle_color_embedding = pred['subtitle_color_embedding']
+        gt = batch['gt']
+        mask = batch['mask']
+        
+        # Compute binary loss
+        if self.binary_loss_type == 'bce':
+            binary_loss = self.binary_loss(subtitle_binary, gt, mask)
+        elif self.binary_loss_type == 'dice':
+            binary_loss = self.binary_loss(subtitle_binary, gt, mask)
+        elif self.binary_loss_type == 'bce+dice':
+            bce_loss = self.bce_loss(subtitle_binary, gt, mask)
+            dice_loss = self.dice_loss(subtitle_binary, gt, mask)
+            binary_loss = bce_loss + dice_loss
+        else:
+            raise ValueError(f"Invalid binary_loss_type: {self.binary_loss_type}")
+        
+        # Compute color embedding loss
+        color_pred = {'color_embedding': subtitle_color_embedding}
+        color_loss, color_metrics = self.color_loss(color_pred, batch)
+        
+        # Combine losses
+        total_loss = binary_loss + self.lambda_color * color_loss
+        
+        # Build metrics
+        metrics = {
+            'subtitle_binary_loss': binary_loss.detach(),
+            'subtitle_color_loss': color_loss.detach(),
+            'subtitle_total_loss': total_loss.detach()
+        }
+        metrics.update({f'color_{k}': v for k, v in color_metrics.items()})
+        
+        if self.binary_loss_type == 'bce+dice':
+            metrics['subtitle_bce_loss'] = bce_loss.detach()
+            metrics['subtitle_dice_loss'] = dice_loss.detach()
+        
+        return total_loss, metrics

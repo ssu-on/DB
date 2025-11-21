@@ -30,6 +30,11 @@ class SegDetector(nn.Module):
         self.color_embed_dim = color_embed_dim
         self.color_normalize = color_normalize
         # ***************************************************
+        
+        # Subtitle branch related ***************************
+        self.enable_subtitle_branch = kwargs.get('enable_subtitle_branch', False)
+        subtitle_inner_channels = kwargs.get('subtitle_inner_channels', inner_channels)
+        # ***************************************************
 
         self.up5 = nn.Upsample(scale_factor=2, mode='nearest')
         self.up4 = nn.Upsample(scale_factor=2, mode='nearest')
@@ -90,6 +95,41 @@ class SegDetector(nn.Module):
                 bias=bias,
                 normalize=self.color_normalize)
             self.color_head.apply(self.weights_init)
+        # ***************************************************
+        
+        # Subtitle branch ***********************************
+        if self.enable_subtitle_branch:
+            # subtitle_fuse_branch: fuse feature를 subtitle 전용 feature로 변환
+            self.subtitle_fuse_branch = nn.Sequential(
+                nn.Conv2d(inner_channels, subtitle_inner_channels, 3, padding=1, bias=bias),
+                BatchNorm2d(subtitle_inner_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(subtitle_inner_channels, subtitle_inner_channels, 3, padding=1, bias=bias),
+                BatchNorm2d(subtitle_inner_channels),
+                nn.ReLU(inplace=True))
+            
+            # subtitle_binary_head: subtitle binary map 생성
+            self.subtitle_binary_head = nn.Sequential(
+                nn.Conv2d(subtitle_inner_channels, subtitle_inner_channels //
+                          4, 3, padding=1, bias=bias),
+                BatchNorm2d(subtitle_inner_channels//4),
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(subtitle_inner_channels//4, subtitle_inner_channels//4, 2, 2),
+                BatchNorm2d(subtitle_inner_channels//4),
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(subtitle_inner_channels//4, 1, 2, 2),
+                nn.Sigmoid())
+            
+            # subtitle_color_embed_head: subtitle color embedding 생성
+            self.subtitle_color_embed_head = ColorEmbeddingHead(
+                subtitle_inner_channels,
+                embed_dim=self.color_embed_dim if self.enable_color_embedding else 16,
+                bias=bias,
+                normalize=self.color_normalize)
+            
+            self.subtitle_fuse_branch.apply(self.weights_init)
+            self.subtitle_binary_head.apply(self.weights_init)
+            self.subtitle_color_embed_head.apply(self.weights_init)
         # ***************************************************
 
     def weights_init(self, m):
@@ -161,6 +201,15 @@ class SegDetector(nn.Module):
         # this is the pred module, not binarization module; 
         # We do not correct the name due to the trained model.
         binary = self.binarize(fuse)                                    # 결합된 특징 (fuse)를 입력으로 p-map(biinary) 생성
+        
+        # Subtitle branch forward **************************************
+        subtitle_binary = None
+        subtitle_color_embedding = None
+        if self.enable_subtitle_branch:
+            subtitle_feature = self.subtitle_fuse_branch(fuse)          # fuse → subtitle 전용 feature
+            subtitle_binary = self.subtitle_binary_head(subtitle_feature)  # subtitle binary map
+            subtitle_color_embedding = self.subtitle_color_embed_head(subtitle_feature)  # subtitle color embedding
+        # **************************************************************
 
         # color_embedding = None                                          # @@ 각 픽셀마다 추정된 embed_dim의 embedding vector가 들어 있는 tensor. None은 초기값.
         # if self.enable_color_embedding:                                 # @@
@@ -177,11 +226,22 @@ class SegDetector(nn.Module):
         # else:
         #     return binary                                             # eval 모드에서는 p-map(binary)만 반환     
         
-        if not self.training and not self.enable_color_embedding:
-            return binary                                               # eval 모드에서는 p-map(binary)만 반환        
+        # Inference mode: return appropriate output
+        if not self.training:
+            # If subtitle branch is enabled, return subtitle_binary for inference
+            if self.enable_subtitle_branch:
+                return subtitle_binary if subtitle_binary is not None else binary
+            # If only color embedding is enabled, return binary
+            if not self.enable_color_embedding:
+                return binary
+        
+        # Training mode: return dict with all outputs
         result = OrderedDict(binary=binary)                             # 이후에 thresh, thresh_binary를 추가하기 위해 딕셔너리 형태로 만듦. loss 계산 시 pred가 dict 형태여야 함 (e.g., {'binary': binary, 'thresh': thresh, 'thresh_binary': thresh_binary})
         if self.enable_color_embedding:
             result.update(color_embedding=color_embedding)
+        if self.enable_subtitle_branch:
+            result.update(subtitle_binary=subtitle_binary)
+            result.update(subtitle_color_embedding=subtitle_color_embedding)
         
         if self.adaptive and self.training:                             # adaptive 모드, thresh, binary-thresh까지 추가 반환, DBNet의 핵심 개념으로, 픽셀별로 다른 threshold를 학습
             if self.serial:
