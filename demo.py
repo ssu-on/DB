@@ -31,6 +31,8 @@ def main():
                         help='output polygons if true')
     parser.add_argument('--eager', '--eager_show', action='store_true', dest='eager_show',
                         help='Show iamges eagerly')
+    parser.add_argument('--dest', type=str, choices=['binary', 'color_embedding'],
+                        help='Select prediction map to feed into representer')
 
     args = parser.parse_args()
     args = vars(args)

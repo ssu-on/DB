@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from shapely.geometry import Polygon
 import pyclipper
+import torch
 from concern.config import Configurable, State
 
 class SegDetectorRepresenter(Configurable):
@@ -43,6 +44,8 @@ class SegDetectorRepresenter(Configurable):
             pred = _pred[self.dest]
         else:
             pred = _pred
+        if self.dest == 'color_embedding':
+            pred = self._convert_color_embedding(pred)
         segmentation = self.binarize(pred)                      # binary map 생성, threshold 넘으면 1
         boxes_batch = []
         scores_batch = []
@@ -62,6 +65,20 @@ class SegDetectorRepresenter(Configurable):
     
     def binarize(self, pred):
         return pred > self.thresh
+
+    def _convert_color_embedding(self, embedding):
+        """
+        Convert embedding tensor (N, C, H, W) to scalar score map (N, 1, H, W).
+        Uses per-sample distance from spatial mean as a simple saliency proxy.
+        """
+        if embedding.dim() != 4:
+            raise ValueError("color_embedding tensor must be 4D (N, C, H, W)")
+        mean = embedding.mean(dim=(2, 3), keepdim=True)
+        diff = embedding - mean
+        dist = torch.norm(diff, dim=1, keepdim=True)
+        max_val = dist.amax(dim=(2, 3), keepdim=True).clamp(min=1e-6)
+        score = dist / max_val
+        return score
 
     def polygons_from_bitmap(self, pred, _bitmap, dest_width, dest_height):
         '''
