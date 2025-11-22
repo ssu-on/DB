@@ -324,12 +324,12 @@ class SubtitleColorConsistencyLoss(nn.Module):
             )
         gt = batch['gt']                         # (N, 1, H, W)
 
-        # Subtitle mask: GT-based
-        subtitle_mask = (gt > self.binary_threshold).float().squeeze(1)  # (N,H,W)
+        # Subtitle mask: GT-based (full resolution)
+        subtitle_mask_full = (gt > self.binary_threshold).float().squeeze(1)  # (N, H, W) - full resolution
 
-        # All text mask from model binary pred
+        # All text mask from model binary pred (full resolution)
         binary_pred = pred.get('binary', None)
-        scene_text_mask = None
+        scene_text_mask_full = None
         if binary_pred is not None:
             if binary_pred.dim() == 4:
                 binary_pred = binary_pred.squeeze(1)
@@ -337,8 +337,29 @@ class SubtitleColorConsistencyLoss(nn.Module):
             # STABLE threshold
             text_mask = (binary_pred.detach() > self.text_binary_threshold).float()
 
-            # scene text = text but not subtitle
-            scene_text_mask = text_mask * (1.0 - subtitle_mask)
+            # scene text = text but not subtitle (full resolution에서 계산)
+            scene_text_mask_full = text_mask * (1.0 - subtitle_mask_full)
+        
+        # CRITICAL: Downsample masks to match feature resolution (1/4)
+        # subtitle_color_embedding is 1/4 resolution, so masks must be downsampled
+        # Use nearest mode to preserve binary mask values (0 or 1)
+        target_size = (color.shape[-2], color.shape[-1])  # (H/4, W/4)
+        
+        subtitle_mask = F.interpolate(
+            subtitle_mask_full.unsqueeze(1),  # (N, H, W) -> (N, 1, H, W)
+            size=target_size,
+            mode='nearest',
+            align_corners=None
+        ).squeeze(1)  # (N, 1, H/4, W/4) -> (N, H/4, W/4)
+        
+        scene_text_mask = None
+        if scene_text_mask_full is not None:
+            scene_text_mask = F.interpolate(
+                scene_text_mask_full.unsqueeze(1),  # (N, H, W) -> (N, 1, H, W)
+                size=target_size,
+                mode='nearest',
+                align_corners=None
+            ).squeeze(1)  # (N, 1, H/4, W/4) -> (N, H/4, W/4)
 
         # bg_mask no longer needed (removed background separation loss)
         return self._compute_loss(color, subtitle_mask, scene_text_mask)
