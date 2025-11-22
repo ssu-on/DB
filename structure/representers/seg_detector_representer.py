@@ -41,6 +41,15 @@ class SegDetectorRepresenter(Configurable):
         '''
         images = batch['image']
         if isinstance(_pred, dict):
+            # @@ dest: 'binary', 'subtitle_binary', 'color_embedding'//////////
+            if self.dest not in _pred:
+                available_keys = ', '.join(_pred.keys())
+                raise KeyError(
+                    f"Requested prediction key '{self.dest}' not found in model output. "
+                    f"Available keys: {available_keys}. "
+                    f"Make sure the model is configured to output '{self.dest}' (e.g., enable_subtitle_branch=True for 'subtitle_binary')."
+                )
+            # @@ /////////////////////////////////////////////////////////////
             pred = _pred[self.dest]
         else:
             pred = _pred

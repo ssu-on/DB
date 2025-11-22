@@ -228,12 +228,13 @@ class SegDetector(nn.Module):
         
         # Inference mode: return appropriate output
         if not self.training:
-            # If subtitle branch is enabled, return subtitle_binary for inference
-            if self.enable_subtitle_branch:
-                return subtitle_binary if subtitle_binary is not None else binary
-            # If only color embedding is enabled, return binary
-            if not self.enable_color_embedding:
-                return binary
+            # Return dict to allow representer to select which prediction to use
+            result = OrderedDict(binary=binary)
+            if self.enable_subtitle_branch and subtitle_binary is not None:
+                result.update(subtitle_binary=subtitle_binary)
+            if self.enable_color_embedding and color_embedding is not None:
+                result.update(color_embedding=color_embedding)
+            return result
         
         # Training mode: return dict with all outputs
         result = OrderedDict(binary=binary)                             # 이후에 thresh, thresh_binary를 추가하기 위해 딕셔너리 형태로 만듦. loss 계산 시 pred가 dict 형태여야 함 (e.g., {'binary': binary, 'thresh': thresh, 'thresh_binary': thresh_binary})
