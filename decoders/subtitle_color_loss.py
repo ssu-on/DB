@@ -443,7 +443,8 @@ class SubtitleColorConsistencyLoss(nn.Module):
             # 5) Subtitle vs SCENE TEXT separation (critical negative)
             if m_scene is not None and sub_mask.sum() >= self.min_pixels:
                 dist_scene = torch.norm(m_sub_global - m_scene, p=2)
-                sub_scene_loss = F.relu(self.margin * 1.5 - dist_scene) ** 2
+                # Use stronger margin (2.0x) to push scene text far away from subtitle cluster
+                sub_scene_loss = F.relu(self.margin * 2.0 - dist_scene) ** 2
                 sub_vs_scene_sum += sub_scene_loss
                 sub_vs_scene_n += 1
 

@@ -375,7 +375,11 @@ class SubtitleBranchLoss(nn.Module):
             raise ValueError(f"Invalid binary_loss_type: {self.binary_loss_type}")
         
         # Compute color embedding loss (use updated batch with tensors)
-        color_pred = {'color_embedding': subtitle_color_embedding}
+        # Include main binary prediction for scene text detection
+        color_pred = {
+            'color_embedding': subtitle_color_embedding,
+            'binary': pred.get('binary', None)  # Main binary for scene text mask calculation
+        }
         color_loss, color_metrics = self.color_loss(color_pred, batch_for_color)
         
         # Combine losses
