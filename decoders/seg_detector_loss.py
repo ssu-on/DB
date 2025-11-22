@@ -376,8 +376,9 @@ class SubtitleBranchLoss(nn.Module):
         
         # Compute color embedding loss (use updated batch with tensors)
         # Include main binary prediction for scene text detection
+        # CRITICAL: Use 'subtitle_color_embedding' key to ensure loss supervises subtitle branch
         color_pred = {
-            'color_embedding': subtitle_color_embedding,
+            'subtitle_color_embedding': subtitle_color_embedding,  # Explicit key for subtitle branch
             'binary': pred.get('binary', None)  # Main binary for scene text mask calculation
         }
         color_loss, color_metrics = self.color_loss(color_pred, batch_for_color)

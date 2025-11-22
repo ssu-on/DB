@@ -310,7 +310,18 @@ class SubtitleColorConsistencyLoss(nn.Module):
         self.eps = eps
 
     def forward(self, pred, batch):
-        color = pred['color_embedding']          # (N, C, H, W)
+        # Use subtitle_color_embedding (NOT general color_embedding)
+        # This is critical: loss must supervise subtitle branch, not general branch
+        if 'subtitle_color_embedding' in pred:
+            color = pred['subtitle_color_embedding']  # (N, C, H, W) - Subtitle branch embedding
+        elif 'color_embedding' in pred:
+            # Fallback for backward compatibility (should not be used for subtitle branch)
+            color = pred['color_embedding']  # (N, C, H, W) - General branch embedding
+        else:
+            raise KeyError(
+                "Neither 'subtitle_color_embedding' nor 'color_embedding' found in pred. "
+                "SubtitleColorConsistencyLoss requires subtitle_color_embedding for subtitle branch supervision."
+            )
         gt = batch['gt']                         # (N, 1, H, W)
 
         # Subtitle mask: GT-based
