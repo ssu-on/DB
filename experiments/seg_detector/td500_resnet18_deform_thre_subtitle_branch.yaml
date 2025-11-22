@@ -18,7 +18,8 @@ define:
                     k: 50
                     # Subtitle branch 설정
                     enable_subtitle_branch: True
-                    use_color_embedding_in_binary: True  # 기본값이 True이므로 생략 가능
+                    use_color_embedding_in_binary: True  # Binary head에 color embedding concat
+                    use_deep_subtitle_fuse: True  # Deep fuse branch 사용 (6-layer + residual + dilation)
                     subtitle_inner_channels: 256
                     enable_color_embedding: True
                     color_embed_dim: 16

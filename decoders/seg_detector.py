@@ -4,9 +4,84 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .color_embedding_head import ColorEmbeddingHead
+from .color_embedding_head import ColorEmbeddingHead, SubtitleColorEmbeddingHead
 
 BatchNorm2d = nn.BatchNorm2d
+
+
+class DeepSubtitleFuseBranch(nn.Module):
+    """
+    Deep subtitle fuse branch with residual connection and dilated convolutions.
+    
+    Transforms general text features (fuse) into subtitle-only feature space.
+    Uses 6 conv layers (4 base + 2 dilated) with residual connection for sufficient 
+    capacity to suppress scene text and extract subtitle-specific features.
+    
+    Structure:
+    - Conv3x3 → BN → ReLU
+    - Conv3x3 → BN → ReLU
+    - ResidualBlock (Conv3x3×2)
+    - Conv3x3(dilation=2) → BN → ReLU
+    - Conv3x3(dilation=4) → BN → ReLU
+    """
+    
+    def __init__(self, in_channels, out_channels, bias=False):
+        super(DeepSubtitleFuseBranch, self).__init__()
+        
+        # First layer: project to subtitle_inner_channels
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1, bias=bias)
+        self.bn1 = BatchNorm2d(out_channels)
+        
+        # Second layer
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=bias)
+        self.bn2 = BatchNorm2d(out_channels)
+        
+        # Residual block: 2 conv layers
+        self.conv3_res = nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=bias)
+        self.bn3_res = BatchNorm2d(out_channels)
+        self.conv4_res = nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=bias)
+        self.bn4_res = BatchNorm2d(out_channels)
+        
+        # Dilated convolutions for larger receptive field (subtitle style capture)
+        self.conv5_dil2 = nn.Conv2d(out_channels, out_channels, 3, padding=2, dilation=2, bias=bias)
+        self.bn5_dil2 = BatchNorm2d(out_channels)
+        
+        self.conv6_dil4 = nn.Conv2d(out_channels, out_channels, 3, padding=4, dilation=4, bias=bias)
+        self.bn6_dil4 = BatchNorm2d(out_channels)
+        
+        self.relu = nn.ReLU(inplace=True)
+        
+    def forward(self, x):
+        # First layer
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        
+        # Second layer
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+        
+        # Residual block
+        residual = out
+        out = self.conv3_res(out)
+        out = self.bn3_res(out)
+        out = self.relu(out)
+        out = self.conv4_res(out)
+        out = self.bn4_res(out)
+        out = out + residual  # Residual connection
+        out = self.relu(out)
+        
+        # Dilated convolutions for larger receptive field
+        out = self.conv5_dil2(out)
+        out = self.bn5_dil2(out)
+        out = self.relu(out)
+        
+        out = self.conv6_dil4(out)
+        out = self.bn6_dil4(out)
+        out = self.relu(out)
+        
+        return out
 
 class SegDetector(nn.Module):
     def __init__(self,
@@ -36,6 +111,8 @@ class SegDetector(nn.Module):
         subtitle_inner_channels = kwargs.get('subtitle_inner_channels', inner_channels)
         # Whether to use color embedding in binary head (essential for subtitle-only detection)
         self.use_color_embedding_in_binary = kwargs.get('use_color_embedding_in_binary', True)
+        # Whether to use deep subtitle_fuse_branch (5-layer + residual) for better scene text suppression
+        self.use_deep_subtitle_fuse = kwargs.get('use_deep_subtitle_fuse', True)
         # ***************************************************
 
         self.up5 = nn.Upsample(scale_factor=2, mode='nearest')
@@ -102,13 +179,20 @@ class SegDetector(nn.Module):
         # Subtitle branch ***********************************
         if self.enable_subtitle_branch:
             # subtitle_fuse_branch: fuse feature를 subtitle 전용 feature로 변환
-            self.subtitle_fuse_branch = nn.Sequential(
-                nn.Conv2d(inner_channels, subtitle_inner_channels, 3, padding=1, bias=bias),
-                BatchNorm2d(subtitle_inner_channels),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(subtitle_inner_channels, subtitle_inner_channels, 3, padding=1, bias=bias),
-                BatchNorm2d(subtitle_inner_channels),
-                nn.ReLU(inplace=True))
+            # Deep version (5-layer + residual) for better scene text suppression
+            if self.use_deep_subtitle_fuse:
+                # Deep branch with residual connection for stronger subtitle-only feature learning
+                self.subtitle_fuse_branch = self._build_deep_subtitle_fuse_branch(
+                    inner_channels, subtitle_inner_channels, bias)
+            else:
+                # Shallow branch (original, 2 conv layers)
+                self.subtitle_fuse_branch = nn.Sequential(
+                    nn.Conv2d(inner_channels, subtitle_inner_channels, 3, padding=1, bias=bias),
+                    BatchNorm2d(subtitle_inner_channels),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(subtitle_inner_channels, subtitle_inner_channels, 3, padding=1, bias=bias),
+                    BatchNorm2d(subtitle_inner_channels),
+                    nn.ReLU(inplace=True))
             
             # subtitle_binary_head: subtitle binary map 생성
             # Input: subtitle_feature + subtitle_color_embedding (concat)
@@ -118,11 +202,26 @@ class SegDetector(nn.Module):
                 embed_dim = self.color_embed_dim if self.enable_color_embedding else 16
                 binary_input_channels = subtitle_inner_channels + embed_dim
             
+            # subtitle_binary_head with dilated convolutions for larger receptive field
+            # This enables subtitle style (stroke, blur, color halo, position) detection
+            # Essential for distinguishing subtitle from scene text
             self.subtitle_binary_head = nn.Sequential(
+                # Base conv
                 nn.Conv2d(binary_input_channels, subtitle_inner_channels //
                           4, 3, padding=1, bias=bias),
                 BatchNorm2d(subtitle_inner_channels//4),
                 nn.ReLU(inplace=True),
+                # Dilated conv for larger receptive field (subtitle style capture)
+                nn.Conv2d(subtitle_inner_channels//4, subtitle_inner_channels//4, 
+                          3, padding=2, dilation=2, bias=bias),
+                BatchNorm2d(subtitle_inner_channels//4),
+                nn.ReLU(inplace=True),
+                # Another dilated conv
+                nn.Conv2d(subtitle_inner_channels//4, subtitle_inner_channels//4, 
+                          3, padding=4, dilation=4, bias=bias),
+                BatchNorm2d(subtitle_inner_channels//4),
+                nn.ReLU(inplace=True),
+                # Upsampling layers
                 nn.ConvTranspose2d(subtitle_inner_channels//4, subtitle_inner_channels//4, 2, 2),
                 BatchNorm2d(subtitle_inner_channels//4),
                 nn.ReLU(inplace=True),
@@ -130,7 +229,9 @@ class SegDetector(nn.Module):
                 nn.Sigmoid())
             
             # subtitle_color_embed_head: subtitle color embedding 생성
-            self.subtitle_color_embed_head = ColorEmbeddingHead(
+            # Use SubtitleColorEmbeddingHead (NO upsampling) to prevent scene text edge restoration
+            # This is critical for subtitle-only detection
+            self.subtitle_color_embed_head = SubtitleColorEmbeddingHead(
                 subtitle_inner_channels,
                 embed_dim=self.color_embed_dim if self.enable_color_embedding else 16,
                 bias=bias,
@@ -141,6 +242,15 @@ class SegDetector(nn.Module):
             self.subtitle_color_embed_head.apply(self.weights_init)
         # ***************************************************
 
+    def _build_deep_subtitle_fuse_branch(self, in_channels, out_channels, bias):
+        """
+        Build deep subtitle fuse branch (5-layer + residual) for better scene text suppression.
+        
+        This provides sufficient capacity to transform general text features (fuse)
+        into subtitle-only feature space, removing scene text information.
+        """
+        return DeepSubtitleFuseBranch(in_channels, out_channels, bias)
+    
     def weights_init(self, m):
         classname = m.__class__.__name__
         if classname.find('Conv') != -1:
@@ -216,22 +326,15 @@ class SegDetector(nn.Module):
         subtitle_color_embedding = None
         if self.enable_subtitle_branch:
             subtitle_feature = self.subtitle_fuse_branch(fuse)          # fuse → subtitle 전용 feature (1/4 resolution)
-            subtitle_color_embedding = self.subtitle_color_embed_head(subtitle_feature)  # subtitle color embedding (full resolution, 4x upsampled)
+            # SubtitleColorEmbeddingHead: NO upsampling, maintains same resolution (H/4, W/4)
+            # This prevents scene text high-frequency edge restoration
+            subtitle_color_embedding = self.subtitle_color_embed_head(subtitle_feature)  # (N, embed_dim, H/4, W/4)
             
             # Concat subtitle_feature + subtitle_color_embedding for binary head
             # This allows binary head to directly use subtitle style information (essential for subtitle-only detection)
+            # Both are same resolution (H/4, W/4) - no downsampling needed
             if self.use_color_embedding_in_binary:
-                # Downsample subtitle_color_embedding to match subtitle_feature spatial size
-                # subtitle_feature: (N, C, H/4, W/4)
-                # subtitle_color_embedding: (N, embed_dim, H, W) -> (N, embed_dim, H/4, W/4)
-                _, _, h_feat, w_feat = subtitle_feature.shape
-                subtitle_color_embedding_downsampled = F.interpolate(
-                    subtitle_color_embedding,
-                    size=(h_feat, w_feat),
-                    mode='bilinear',
-                    align_corners=False
-                )
-                binary_input = torch.cat([subtitle_feature, subtitle_color_embedding_downsampled], dim=1)
+                binary_input = torch.cat([subtitle_feature, subtitle_color_embedding], dim=1)  # (N, C+embed_dim, H/4, W/4)
             else:
                 # Fallback: use subtitle_feature only (old behavior)
                 binary_input = subtitle_feature
