@@ -278,27 +278,30 @@ import numpy as np
 
 class SubtitleColorConsistencyLoss(nn.Module):
     """
-    Subtitle-specific color embedding consistency loss with:
-    - Intra-subtitle compactness
-    - Instance-level consistency
-    - Subtitle vs background separation
-    - Subtitle vs SCENE TEXT separation (explicit negative supervision)
+    Minimal subtitle-only color embedding loss.
+    
+    Core components (essential for subtitle-only detection):
+    1. **Intra-subtitle compactness**: Each subtitle instance forms a tight cluster
+    2. **Subtitle vs scene text negative**: Push scene text away from subtitle cluster (critical)
+    
+    Optional component:
+    3. **Instance consistency**: Multiple subtitle instances share same style (optional)
+    
+    Removed components (not needed for subtitle-only):
+    - Subtitle vs background separation (background is not text, scene text negative is sufficient)
+    - Inter-subtitle instance vs background (same reason)
     """
 
     def __init__(self,
-                 lambda_inter: float = 0.4,
-                 lambda_instance_consistency: float = 0.1,
-                 lambda_subtitle_vs_background: float = 0.2,
-                 lambda_subtitle_vs_scene_text: float = 0.5,
+                 lambda_instance_consistency: float = 0.1,  # Optional: can be 0.0 to disable
+                 lambda_subtitle_vs_scene_text: float = 0.5,  # Essential: scene text negative
                  margin: float = 0.5,
                  binary_threshold: float = 0.5,
-                 text_binary_threshold: float = 0.5,  # STABLE
+                 text_binary_threshold: float = 0.5,
                  min_pixels: int = 20,
                  eps: float = 1e-6):
         super().__init__()
-        self.lambda_inter = lambda_inter
         self.lambda_instance_consistency = lambda_instance_consistency
-        self.lambda_subtitle_vs_background = lambda_subtitle_vs_background
         self.lambda_subtitle_vs_scene_text = lambda_subtitle_vs_scene_text
         self.margin = margin
         self.min_pixels = min_pixels
@@ -326,13 +329,8 @@ class SubtitleColorConsistencyLoss(nn.Module):
             # scene text = text but not subtitle
             scene_text_mask = text_mask * (1.0 - subtitle_mask)
 
-        # Background mask = not subtitle AND not scene text
-        if scene_text_mask is not None:
-            bg_mask = (1.0 - subtitle_mask) * (1.0 - scene_text_mask)
-        else:
-            bg_mask = 1.0 - subtitle_mask
-
-        return self._compute_loss(color, subtitle_mask, bg_mask, scene_text_mask)
+        # bg_mask no longer needed (removed background separation loss)
+        return self._compute_loss(color, subtitle_mask, scene_text_mask)
 
 
     # --------------------
@@ -360,26 +358,23 @@ class SubtitleColorConsistencyLoss(nn.Module):
     # Main Loss
     # --------------------
 
-    def _compute_loss(self, color, subtitle_mask, bg_mask, scene_text_mask=None):
+    def _compute_loss(self, color, subtitle_mask, scene_text_mask=None):
         N, C, H, W = color.shape
 
         total = 0
         intra_sum = color.new_zeros(())
-        inter_sum = color.new_zeros(())
         inst_consistency_sum = color.new_zeros(())
-        sub_vs_bg_sum = color.new_zeros(())
         sub_vs_scene_sum = color.new_zeros(())
 
         inst_consistency_n = 0
-        sub_vs_bg_n = 0
         sub_vs_scene_n = 0
 
         for b in range(N):
             feat = color[b]
             sub_mask = subtitle_mask[b]
-            bg = bg_mask[b]
 
-            if bg.sum() < self.min_pixels:
+            # Skip if no subtitle
+            if sub_mask.sum() < self.min_pixels:
                 continue
 
             comps = self._extract_components(sub_mask)
@@ -389,12 +384,7 @@ class SubtitleColorConsistencyLoss(nn.Module):
             # global subtitle style
             m_sub_global = self._masked_mean(feat, sub_mask)
 
-            # background center
-            m_bg = None
-            if bg.sum() >= self.min_pixels:
-                m_bg = self._masked_mean(feat, bg)
-
-            # scene text center (explicit negative)
+            # scene text center (explicit negative - essential for subtitle-only)
             m_scene = None
             if scene_text_mask is not None:
                 scene = scene_text_mask[b]
@@ -412,35 +402,22 @@ class SubtitleColorConsistencyLoss(nn.Module):
                 m_inst = self._masked_mean(feat, comp)
                 instance_means.append(m_inst)
 
-                # 1) Intra compactness
+                # 1) Intra compactness (ESSENTIAL: tight subtitle cluster)
                 delta = feat - m_inst.view(C, 1, 1)
                 dist_sq = (delta ** 2).sum(dim=0)
                 intra = (dist_sq * comp).sum() / (comp.sum() + self.eps)
                 intra_sum += intra
 
-                # 2) Inter: instance vs background
-                if m_bg is not None:
-                    dist = torch.norm(m_inst - m_bg, p=2)
-                    inter = F.relu(self.margin - dist) ** 2
-                    inter_sum += inter
-
                 total += 1
 
-            # 3) Instance consistency: instance vs global center
+            # 2) Instance consistency (OPTIONAL: style alignment for multiple instances)
             if len(instance_means) > 1:
                 for m_inst in instance_means:
                     dist = torch.norm(m_inst - m_sub_global, p=2)
                     inst_consistency_sum += dist ** 2
                     inst_consistency_n += 1
 
-            # 4) Subtitle vs background separation
-            if m_bg is not None and sub_mask.sum() >= self.min_pixels:
-                dist_bg = torch.norm(m_sub_global - m_bg, p=2)
-                sub_bg_loss = F.relu(self.margin * 1.0 - dist_bg) ** 2
-                sub_vs_bg_sum += sub_bg_loss
-                sub_vs_bg_n += 1
-
-            # 5) Subtitle vs SCENE TEXT separation (critical negative)
+            # 3) Subtitle vs SCENE TEXT separation (ESSENTIAL: subtitle-only detector)
             if m_scene is not None and sub_mask.sum() >= self.min_pixels:
                 dist_scene = torch.norm(m_sub_global - m_scene, p=2)
                 # Use stronger margin (2.0x) to push scene text far away from subtitle cluster
@@ -454,21 +431,14 @@ class SubtitleColorConsistencyLoss(nn.Module):
             return zero, {
                 'color_loss': zero,
                 'color_intra': zero,
-                'color_inter': zero,
                 'color_inst': zero,
-                'color_sub_vs_bg': zero,
                 'color_sub_vs_scene': zero,
             }
 
         intra_avg = intra_sum / total
-        inter_avg = inter_sum / total
 
         inst_consistency_avg = (
             inst_consistency_sum / inst_consistency_n if inst_consistency_n > 0 else color.new_zeros(())
-        )
-
-        sub_vs_bg_avg = (
-            sub_vs_bg_sum / sub_vs_bg_n if sub_vs_bg_n > 0 else color.new_zeros(())
         )
 
         sub_vs_scene_avg = (
@@ -476,19 +446,18 @@ class SubtitleColorConsistencyLoss(nn.Module):
         )
 
         # ----------- Total Loss ----------
+        # Minimal loss: only essential components for subtitle-only detection
         loss = (
-            intra_avg
-            + self.lambda_inter * inter_avg
-            + self.lambda_instance_consistency * inst_consistency_avg
-            + self.lambda_subtitle_vs_background * sub_vs_bg_avg
-            + self.lambda_subtitle_vs_scene_text * sub_vs_scene_avg
+            intra_avg  # Essential: tight subtitle cluster
+            + self.lambda_instance_consistency * inst_consistency_avg  # Optional: style alignment
+            + self.lambda_subtitle_vs_scene_text * sub_vs_scene_avg  # Essential: scene text negative
         )
 
         return loss, {
             'color_loss': loss.detach(),
             'color_intra': intra_avg.detach(),
-            'color_inter': inter_avg.detach(),
             'color_inst': inst_consistency_avg.detach(),
-            'color_sub_vs_bg': sub_vs_bg_avg.detach(),
             'color_sub_vs_scene': sub_vs_scene_avg.detach(),
+            # Debug info
+            'color_sub_vs_scene_count': color.new_tensor(float(sub_vs_scene_n)),
         }

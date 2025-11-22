@@ -34,6 +34,8 @@ class SegDetector(nn.Module):
         # Subtitle branch related ***************************
         self.enable_subtitle_branch = kwargs.get('enable_subtitle_branch', False)
         subtitle_inner_channels = kwargs.get('subtitle_inner_channels', inner_channels)
+        # Whether to use color embedding in binary head (essential for subtitle-only detection)
+        self.use_color_embedding_in_binary = kwargs.get('use_color_embedding_in_binary', True)
         # ***************************************************
 
         self.up5 = nn.Upsample(scale_factor=2, mode='nearest')
@@ -109,8 +111,15 @@ class SegDetector(nn.Module):
                 nn.ReLU(inplace=True))
             
             # subtitle_binary_head: subtitle binary map 생성
+            # Input: subtitle_feature + subtitle_color_embedding (concat)
+            # This allows binary head to directly use subtitle style information
+            binary_input_channels = subtitle_inner_channels
+            if self.use_color_embedding_in_binary:
+                embed_dim = self.color_embed_dim if self.enable_color_embedding else 16
+                binary_input_channels = subtitle_inner_channels + embed_dim
+            
             self.subtitle_binary_head = nn.Sequential(
-                nn.Conv2d(subtitle_inner_channels, subtitle_inner_channels //
+                nn.Conv2d(binary_input_channels, subtitle_inner_channels //
                           4, 3, padding=1, bias=bias),
                 BatchNorm2d(subtitle_inner_channels//4),
                 nn.ReLU(inplace=True),
@@ -206,9 +215,28 @@ class SegDetector(nn.Module):
         subtitle_binary = None
         subtitle_color_embedding = None
         if self.enable_subtitle_branch:
-            subtitle_feature = self.subtitle_fuse_branch(fuse)          # fuse → subtitle 전용 feature
-            subtitle_binary = self.subtitle_binary_head(subtitle_feature)  # subtitle binary map
-            subtitle_color_embedding = self.subtitle_color_embed_head(subtitle_feature)  # subtitle color embedding
+            subtitle_feature = self.subtitle_fuse_branch(fuse)          # fuse → subtitle 전용 feature (1/4 resolution)
+            subtitle_color_embedding = self.subtitle_color_embed_head(subtitle_feature)  # subtitle color embedding (full resolution, 4x upsampled)
+            
+            # Concat subtitle_feature + subtitle_color_embedding for binary head
+            # This allows binary head to directly use subtitle style information (essential for subtitle-only detection)
+            if self.use_color_embedding_in_binary:
+                # Downsample subtitle_color_embedding to match subtitle_feature spatial size
+                # subtitle_feature: (N, C, H/4, W/4)
+                # subtitle_color_embedding: (N, embed_dim, H, W) -> (N, embed_dim, H/4, W/4)
+                _, _, h_feat, w_feat = subtitle_feature.shape
+                subtitle_color_embedding_downsampled = F.interpolate(
+                    subtitle_color_embedding,
+                    size=(h_feat, w_feat),
+                    mode='bilinear',
+                    align_corners=False
+                )
+                binary_input = torch.cat([subtitle_feature, subtitle_color_embedding_downsampled], dim=1)
+            else:
+                # Fallback: use subtitle_feature only (old behavior)
+                binary_input = subtitle_feature
+            
+            subtitle_binary = self.subtitle_binary_head(binary_input)  # subtitle binary map (4x upsampled to full resolution)
         # **************************************************************
 
         # color_embedding = None                                          # @@ 각 픽셀마다 추정된 embed_dim의 embedding vector가 들어 있는 tensor. None은 초기값.
