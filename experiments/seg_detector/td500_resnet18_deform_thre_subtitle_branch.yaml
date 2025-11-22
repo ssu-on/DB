@@ -72,14 +72,14 @@ define:
             class: OptimizerScheduler
             optimizer: "SGD"
             optimizer_args:
-                lr: 0.001  # Subtitle branch만 학습하므로 더 낮은 learning rate 사용
+                lr: 0.0003  # Subtitle branch만 학습하므로 더 낮은 learning rate 사용
                 momentum: 0.9
                 weight_decay: 0.0001
             learning_rate:  
                 class: DecayLearningRate
-                epochs: 300  # Subtitle branch 학습은 더 적은 epoch
-                warmup_steps: 500
-        epochs: 300
+                epochs: 150  # Subtitle branch 학습은 더 적은 epoch
+                warmup_steps: 1500
+        epochs: 150
 
     validation: &validate
         class: ValidationSettings
@@ -112,13 +112,13 @@ define:
     processes:
       - class: AugmentDetectionData
         augmenter_args:
-          - ['Fliplr', 0.5]
-          - {'cls': 'Affine', 'rotate': [-10, 10]}
-          - ['Resize', [0.5, 3.0]]
+          - ['Fliplr', 0.3]
+          - {'cls': 'Affine', 'rotate': [-3, 3]}
+          - ['Resize', [0.7, 1.4]]
         only_resize: False
         keep_ratio: False
       - class: RandomCropData
-        size: [640, 640]
+        size: [736, 736]
         max_tries: 10
       - class: MakeICDARData
       - class: MakeSegDetectionData
