@@ -48,6 +48,8 @@ define:
             # GT가 subtitle만 라벨링되어 있으면, scene text 검출은 전부 FP로 들어가게 됨
             dest: subtitle_binary
             max_candidates: 1000
+            thresh: 0.25        # @@
+            box_thresh: 0.6     # @@
         measurer:  
             class: QuadMeasurer
         visualizer:  
