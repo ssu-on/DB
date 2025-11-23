@@ -174,13 +174,23 @@ class Trainer:
         for i, batch in tqdm(enumerate(data_loader), total=len(data_loader)):
             pred = model.forward(batch, training=False)
             output = self.structure.representer.represent(batch, pred)
-            raw_metric, interested = self.structure.measurer.validate_measure(
-                batch, output)
+
+            # measurer.validate_measure 인터페이스는 구현체마다 다를 수 있음
+            # - QuadMeasurer: raw_metric만 반환
+            # - 다른 measurer: (raw_metric, interested) 튜플 반환 가능
+            result = self.structure.measurer.validate_measure(batch, output)
+            if isinstance(result, tuple) and len(result) == 2:
+                raw_metric, interested = result
+            else:
+                raw_metric = result
+                interested = None
             raw_metrics.append(raw_metric)
 
             if visualize and self.structure.visualizer:
+                # interested가 없으면 pred를 넘겨서 기본 시각화 사용
+                target_for_vis = interested if interested is not None else pred
                 vis_image = self.structure.visualizer.visualize(
-                    batch, output, interested)
+                    batch, output, target_for_vis)
                 vis_images.update(vis_image)
         metrics = self.structure.measurer.gather_measure(
             raw_metrics, self.logger)
