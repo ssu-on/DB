@@ -113,6 +113,9 @@ class SegDetector(nn.Module):
         self.use_color_embedding_in_binary = kwargs.get('use_color_embedding_in_binary', True)
         # Whether to use deep subtitle_fuse_branch (5-layer + residual) for better scene text suppression
         self.use_deep_subtitle_fuse = kwargs.get('use_deep_subtitle_fuse', True)
+        # CRITICAL: Style-based gating for subtitle-only detection
+        # This is the key mechanism that enables subtitle-only detection by suppressing scene text features
+        self.use_style_gating = kwargs.get('use_style_gating', True)
         # ***************************************************
 
         self.up5 = nn.Upsample(scale_factor=2, mode='nearest')
@@ -195,12 +198,18 @@ class SegDetector(nn.Module):
                     nn.ReLU(inplace=True))
             
             # subtitle_binary_head: subtitle binary map 생성
-            # Input: subtitle_feature + subtitle_color_embedding (concat)
-            # This allows binary head to directly use subtitle style information
-            binary_input_channels = subtitle_inner_channels
-            if self.use_color_embedding_in_binary:
-                embed_dim = self.color_embed_dim if self.enable_color_embedding else 16
-                binary_input_channels = subtitle_inner_channels + embed_dim
+            # Input depends on gating mode:
+            # - With style_gating: gated_subtitle_feature (N, C, H/4, W/4) - scene text features already suppressed
+            # - Without style_gating: concat(subtitle_feature, subtitle_color_embedding) or subtitle_feature only
+            if self.use_style_gating:
+                # Style gating mode: use gated feature only (scene text already suppressed)
+                binary_input_channels = subtitle_inner_channels
+            else:
+                # Concat mode: may include color embedding
+                binary_input_channels = subtitle_inner_channels
+                if self.use_color_embedding_in_binary:
+                    embed_dim = self.color_embed_dim if self.enable_color_embedding else 16
+                    binary_input_channels = subtitle_inner_channels + embed_dim
             
             # subtitle_binary_head with dilated convolutions for larger receptive field
             # This enables subtitle style (stroke, blur, color halo, position) detection
@@ -236,6 +245,24 @@ class SegDetector(nn.Module):
                 embed_dim=self.color_embed_dim if self.enable_color_embedding else 16,
                 bias=bias,
                 normalize=self.color_normalize)
+            
+            # CRITICAL: Style-based gating head for subtitle-only detection
+            # This generates a gating map (N, 1, H/4, W/4) that suppresses scene text features
+            # subtitle_color_embedding → style_gate → feature gating → subtitle-only feature
+            if self.use_style_gating:
+                embed_dim = self.color_embed_dim if self.enable_color_embedding else 16
+                # Style gate head: converts style embedding to gating map
+                # Input: subtitle_color_embedding (N, embed_dim, H/4, W/4)
+                # Output: style_gate (N, 1, H/4, W/4) with values in [0, 1]
+                # subtitle style regions → 1.0, scene text regions → 0.0
+                self.style_gate_head = nn.Sequential(
+                    nn.Conv2d(embed_dim, embed_dim // 2, 3, padding=1, bias=bias),
+                    BatchNorm2d(embed_dim // 2),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(embed_dim // 2, 1, 3, padding=1, bias=True),
+                    nn.Sigmoid()  # Output in [0, 1] range
+                )
+                self.style_gate_head.apply(self.weights_init)
             
             self.subtitle_fuse_branch.apply(self.weights_init)
             self.subtitle_binary_head.apply(self.weights_init)
@@ -330,14 +357,33 @@ class SegDetector(nn.Module):
             # This prevents scene text high-frequency edge restoration
             subtitle_color_embedding = self.subtitle_color_embed_head(subtitle_feature)  # (N, embed_dim, H/4, W/4)
             
-            # Concat subtitle_feature + subtitle_color_embedding for binary head
-            # This allows binary head to directly use subtitle style information (essential for subtitle-only detection)
-            # Both are same resolution (H/4, W/4) - no downsampling needed
-            if self.use_color_embedding_in_binary:
-                binary_input = torch.cat([subtitle_feature, subtitle_color_embedding], dim=1)  # (N, C+embed_dim, H/4, W/4)
+            # CRITICAL: Style-based gating for subtitle-only detection
+            # This is the key mechanism that enables subtitle-only detection
+            # Without gating, CNN binary head ignores style embedding and detects all text (scene text included)
+            if self.use_style_gating:
+                # Generate style gate: subtitle style regions → 1.0, scene text regions → 0.0
+                style_gate = self.style_gate_head(subtitle_color_embedding)  # (N, 1, H/4, W/4)
+                
+                # Apply gating to subtitle_feature: scene text features are suppressed (multiplied by 0)
+                # subtitle_feature: (N, C, H/4, W/4)
+                # style_gate: (N, 1, H/4, W/4)
+                gated_subtitle_feature = subtitle_feature * style_gate  # (N, C, H/4, W/4)
+                # Now gated_subtitle_feature has:
+                # - subtitle regions: original feature (style_gate ≈ 1.0)
+                # - scene text regions: zeroed out (style_gate ≈ 0.0)
+                
+                # Use gated feature for binary head
+                binary_input = gated_subtitle_feature
             else:
-                # Fallback: use subtitle_feature only (old behavior)
-                binary_input = subtitle_feature
+                # Fallback: concat-based approach (less effective, but backward compatible)
+                # Concat subtitle_feature + subtitle_color_embedding for binary head
+                # This allows binary head to directly use subtitle style information (essential for subtitle-only detection)
+                # Both are same resolution (H/4, W/4) - no downsampling needed
+                if self.use_color_embedding_in_binary:
+                    binary_input = torch.cat([subtitle_feature, subtitle_color_embedding], dim=1)  # (N, C+embed_dim, H/4, W/4)
+                else:
+                    # Fallback: use subtitle_feature only (old behavior)
+                    binary_input = subtitle_feature
             
             subtitle_binary = self.subtitle_binary_head(binary_input)  # subtitle binary map (4x upsampled to full resolution)
         # **************************************************************

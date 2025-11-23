@@ -288,6 +288,8 @@ class SubtitleBranchLoss(nn.Module):
     def __init__(self, 
                  binary_loss_type='bce',  # 'bce', 'dice', or 'bce+dice'
                  lambda_color=0.3,
+                 negative_bce_alpha=0.5,  # Weight for scene text negative loss (critical for subtitle-only detection)
+                 text_binary_threshold=0.5,  # Threshold for detecting all text regions from main binary
                  eps=1e-6,
                  **kwargs):
         super(SubtitleBranchLoss, self).__init__()
@@ -298,6 +300,8 @@ class SubtitleBranchLoss(nn.Module):
         
         self.binary_loss_type = binary_loss_type
         self.lambda_color = lambda_color
+        self.negative_bce_alpha = negative_bce_alpha
+        self.text_binary_threshold = text_binary_threshold
         
         # Binary loss components
         if binary_loss_type == 'bce':
@@ -312,6 +316,11 @@ class SubtitleBranchLoss(nn.Module):
             self.use_dice = True
         else:
             raise ValueError(f"binary_loss_type must be 'bce', 'dice', or 'bce+dice', got {binary_loss_type}")
+        
+        # Negative BCE loss for scene text (explicit negative supervision)
+        # This forces subtitle_binary to output low values in scene text regions
+        if self.negative_bce_alpha > 0:
+            self.negative_bce_loss = BalanceCrossEntropyLoss(**kwargs.get('bce_kwargs', {}))
         
         # Color embedding loss
         self.color_loss = SubtitleColorConsistencyLoss(**kwargs.get('color_kwargs', {}))
@@ -357,12 +366,29 @@ class SubtitleBranchLoss(nn.Module):
         if mask.dim() == 4 and mask.size(1) == 1:
             mask = mask[:, 0]  # (N, 1, H, W) -> (N, H, W)
         
+        # Subtitle mask (full resolution)
+        subtitle_mask = (gt.squeeze(1) > 0.5).float()  # (N, H, W)
+        
+        # Compute scene text mask: text regions that are NOT subtitle
+        # This is critical for subtitle-only detection - forces subtitle_binary to suppress scene text
+        scene_text_mask = None
+        binary_pred = pred.get('binary', None)
+        if binary_pred is not None and self.negative_bce_alpha > 0:
+            if binary_pred.dim() == 4:
+                binary_pred = binary_pred.squeeze(1)  # (N, 1, H, W) -> (N, H, W)
+            
+            # All text regions from main binary prediction
+            text_mask = (binary_pred.detach() > self.text_binary_threshold).float()  # (N, H, W)
+            
+            # Scene text = text but not subtitle
+            scene_text_mask = text_mask * (1.0 - subtitle_mask)  # (N, H, W)
+        
         # Update batch with tensor values so color_loss receives tensors
         batch_for_color = batch.copy()
         batch_for_color['gt'] = gt
         batch_for_color['mask'] = mask
         
-        # Compute binary loss
+        # Compute binary loss (subtitle positive supervision)
         if self.binary_loss_type == 'bce':
             binary_loss = self.binary_loss(subtitle_binary, gt, mask)
         elif self.binary_loss_type == 'dice':
@@ -373,6 +399,20 @@ class SubtitleBranchLoss(nn.Module):
             binary_loss = bce_loss + dice_loss
         else:
             raise ValueError(f"Invalid binary_loss_type: {self.binary_loss_type}")
+        
+        # CRITICAL: Scene text negative loss (forces subtitle_binary to output low values in scene text regions)
+        # This is essential for subtitle-only detection - prevents all text from being detected
+        negative_loss = None
+        if scene_text_mask is not None and self.negative_bce_alpha > 0:
+            # Use valid mask (ignore regions) for scene text mask
+            valid_scene_text_mask = scene_text_mask * mask  # (N, H, W)
+            
+            if valid_scene_text_mask.sum() > 0:
+                # Target: subtitle_binary should be 0 in scene text regions
+                zeros_gt = torch.zeros_like(subtitle_binary)  # (N, 1, H, W)
+                # Expand mask to (N, 1, H, W) for loss computation
+                negative_mask = valid_scene_text_mask.unsqueeze(1)  # (N, 1, H, W)
+                negative_loss = self.negative_bce_loss(subtitle_binary, zeros_gt, negative_mask.squeeze(1))
         
         # Compute color embedding loss (use updated batch with tensors)
         # Include main binary prediction for scene text detection
@@ -385,6 +425,8 @@ class SubtitleBranchLoss(nn.Module):
         
         # Combine losses
         total_loss = binary_loss + self.lambda_color * color_loss
+        if negative_loss is not None:
+            total_loss = total_loss + self.negative_bce_alpha * negative_loss
         
         # Build metrics
         metrics = {
@@ -397,5 +439,9 @@ class SubtitleBranchLoss(nn.Module):
         if self.binary_loss_type == 'bce+dice':
             metrics['subtitle_bce_loss'] = bce_loss.detach()
             metrics['subtitle_dice_loss'] = dice_loss.detach()
+        
+        if negative_loss is not None:
+            metrics['subtitle_negative_loss'] = negative_loss.detach()
+            metrics['scene_text_pixels'] = scene_text_mask.sum().detach() if scene_text_mask is not None else torch.tensor(0.0, device=device)
         
         return total_loss, metrics
