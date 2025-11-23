@@ -2,6 +2,7 @@ import sys
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 
 # Import SubtitleRefinedL1BalanceCELoss from subtitle_refined_loss module
@@ -302,6 +303,7 @@ class SubtitleBranchLoss(nn.Module):
         self.lambda_color = lambda_color
         self.negative_bce_alpha = negative_bce_alpha
         self.text_binary_threshold = text_binary_threshold
+        self.eps = eps
         
         # Binary loss components
         if binary_loss_type == 'bce':
@@ -316,11 +318,6 @@ class SubtitleBranchLoss(nn.Module):
             self.use_dice = True
         else:
             raise ValueError(f"binary_loss_type must be 'bce', 'dice', or 'bce+dice', got {binary_loss_type}")
-        
-        # Negative BCE loss for scene text (explicit negative supervision)
-        # This forces subtitle_binary to output low values in scene text regions
-        if self.negative_bce_alpha > 0:
-            self.negative_bce_loss = BalanceCrossEntropyLoss(**kwargs.get('bce_kwargs', {}))
         
         # Color embedding loss
         self.color_loss = SubtitleColorConsistencyLoss(**kwargs.get('color_kwargs', {}))
@@ -403,6 +400,7 @@ class SubtitleBranchLoss(nn.Module):
         # CRITICAL: Scene text negative loss (forces subtitle_binary to output low values in scene text regions)
         # This is essential for subtitle-only detection - prevents all text from being detected
         negative_loss = None
+        subtitle_scene_overlap = None
         if scene_text_mask is not None and self.negative_bce_alpha > 0:
             # Use valid mask (ignore regions) for scene text mask
             valid_scene_text_mask = scene_text_mask * mask  # (N, H, W)
@@ -410,9 +408,25 @@ class SubtitleBranchLoss(nn.Module):
             if valid_scene_text_mask.sum() > 0:
                 # Target: subtitle_binary should be 0 in scene text regions
                 zeros_gt = torch.zeros_like(subtitle_binary)  # (N, 1, H, W)
-                # Expand mask to (N, 1, H, W) for loss computation
-                negative_mask = valid_scene_text_mask.unsqueeze(1)  # (N, 1, H, W)
-                negative_loss = self.negative_bce_loss(subtitle_binary, zeros_gt, negative_mask.squeeze(1))
+
+                # NOTE:
+                # BalanceCrossEntropyLoss는 gt가 전부 0인 영역에서는
+                # positive_count=0, negative_count=0이 되어 항상 0 loss를 반환한다.
+                # 따라서 subtitle-negative 용도에는 맞지 않으므로,
+                # 여기서는 픽셀 단위 BCE를 직접 계산해서 사용한다.
+                bce_map = F.binary_cross_entropy(
+                    subtitle_binary, zeros_gt, reduction='none'
+                )[:, 0, :, :]  # (N, H, W)
+
+                masked_bce = bce_map * valid_scene_text_mask  # (N, H, W)
+                negative_loss = masked_bce.sum() / (valid_scene_text_mask.sum() + self.eps)
+
+                # Logging용: subtitle_binary가 scene text 영역을 얼마나 subtitle로 잡는지 비율
+                with torch.no_grad():
+                    subtitle_pred_mask = (subtitle_binary.detach() > 0.5).float().squeeze(1)  # (N, H, W)
+                    overlap_pixels = (subtitle_pred_mask * scene_text_mask).sum()
+                    total_scene_pixels = scene_text_mask.sum()
+                    subtitle_scene_overlap = overlap_pixels / (total_scene_pixels + self.eps)
         
         # Compute color embedding loss (use updated batch with tensors)
         # Include main binary prediction for scene text detection
@@ -443,5 +457,8 @@ class SubtitleBranchLoss(nn.Module):
         if negative_loss is not None:
             metrics['subtitle_negative_loss'] = negative_loss.detach()
             metrics['scene_text_pixels'] = scene_text_mask.sum().detach() if scene_text_mask is not None else torch.tensor(0.0, device=device)
+            if subtitle_scene_overlap is not None:
+                # scene text 영역 중 subtitle_binary가 0.5 이상으로 예측한 비율
+                metrics['subtitle_scene_overlap'] = subtitle_scene_overlap.detach()
         
         return total_loss, metrics
