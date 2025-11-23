@@ -30,7 +30,7 @@ define:
                 loss_kwargs:
                     binary_loss_type: 'bce+dice'  # 'bce', 'dice', or 'bce+dice'
                     lambda_color: 0.3  # color embedding loss weight
-                    negative_bce_alpha: 0.2
+                    negative_bce_alpha: 0.5
                     eps: 1e-6
                     bce_kwargs:
                         negative_ratio: 3.0

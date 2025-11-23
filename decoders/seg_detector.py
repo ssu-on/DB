@@ -185,6 +185,8 @@ class SegDetector(nn.Module):
             # Deep version (5-layer + residual) for better scene text suppression
             if self.use_deep_subtitle_fuse:
                 # Deep branch with residual connection for stronger subtitle-only feature learning
+                # NOTE: subtitle_fuse_branch는 좌표 정보를 포함한 fuse를 입력으로 받기 때문에,
+                #      subtitle_coord_proj에서 좌표 채널을 projection 한 뒤의 feature를 사용한다.
                 self.subtitle_fuse_branch = self._build_deep_subtitle_fuse_branch(
                     inner_channels, subtitle_inner_channels, bias)
             else:
@@ -196,6 +198,20 @@ class SegDetector(nn.Module):
                     nn.Conv2d(subtitle_inner_channels, subtitle_inner_channels, 3, padding=1, bias=bias),
                     BatchNorm2d(subtitle_inner_channels),
                     nn.ReLU(inplace=True))
+
+            # -------------------------------------------------
+            # Subtitle coordinate projection:
+            # fuse (N, C, H, W) + (x_map, y_map, center_dist) → (N, C, H, W)
+            # 위치 정보를 feature에 녹여 subtitle branch가 "어디에 있는 글자인지"를 함께 보도록 함.
+            # -------------------------------------------------
+            # x_map: [-1, 1] (left → right)
+            # y_map: [0, 1]  (top → bottom)
+            # center_dist: 1 - |x_map| (center emphasis)
+            self.subtitle_coord_proj = nn.Sequential(
+                nn.Conv2d(inner_channels + 3, inner_channels, kernel_size=1, bias=bias),
+                BatchNorm2d(inner_channels),
+                nn.ReLU(inplace=True),
+            )
             
             # subtitle_binary_head: subtitle binary map 생성
             # Input depends on gating mode:
@@ -265,6 +281,7 @@ class SegDetector(nn.Module):
                 self.style_gate_head.apply(self.weights_init)
             
             self.subtitle_fuse_branch.apply(self.weights_init)
+            self.subtitle_coord_proj.apply(self.weights_init)
             self.subtitle_binary_head.apply(self.weights_init)
             self.subtitle_color_embed_head.apply(self.weights_init)
         # ***************************************************
@@ -352,7 +369,28 @@ class SegDetector(nn.Module):
         subtitle_binary = None
         subtitle_color_embedding = None
         if self.enable_subtitle_branch:
-            subtitle_feature = self.subtitle_fuse_branch(fuse)          # fuse → subtitle 전용 feature (1/4 resolution)
+            # -----------------------------------------------------
+            # 위치 정보를 포함한 fuse 생성
+            # -----------------------------------------------------
+            N, C, H, W = fuse.shape
+            device = fuse.device
+            dtype = fuse.dtype
+
+            # x: [-1, 1] (left → right)
+            x_range = torch.linspace(-1.0, 1.0, W, device=device, dtype=dtype)
+            x_map = x_range.view(1, 1, 1, W).expand(N, 1, H, W)
+
+            # y: [0, 1] (top → bottom)
+            y_range = torch.linspace(0.0, 2.0, H, device=device, dtype=dtype)
+            y_map = y_range.view(1, 1, H, 1).expand(N, 1, H, W)
+
+            # center distance: 1 - |x|, 중심에 가까울수록 1, 양 끝으로 갈수록 0
+            center_dist = 1.0 - x_map.abs()
+
+            fuse_with_coord = torch.cat([fuse, x_map, y_map, center_dist], dim=1)
+            fuse_for_subtitle = self.subtitle_coord_proj(fuse_with_coord)
+
+            subtitle_feature = self.subtitle_fuse_branch(fuse_for_subtitle)          # fuse → subtitle 전용 feature (1/4 resolution)
             # SubtitleColorEmbeddingHead: NO upsampling, maintains same resolution (H/4, W/4)
             # This prevents scene text high-frequency edge restoration
             subtitle_color_embedding = self.subtitle_color_embed_head(subtitle_feature)  # (N, embed_dim, H/4, W/4)
