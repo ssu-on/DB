@@ -303,7 +303,8 @@ class SubtitleBranchLoss(nn.Module):
         self.lambda_color = lambda_color
         self.negative_bce_alpha = negative_bce_alpha
         self.text_binary_threshold = text_binary_threshold
-        self.eps = eps
+        # YAML에서 문자열로 들어올 수도 있으니 안전하게 float 캐스팅
+        self.eps = float(eps)
         
         # Binary loss components
         if binary_loss_type == 'bce':
