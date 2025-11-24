@@ -23,6 +23,7 @@ class ImageDataset(data.Dataset, Configurable):
         self.load_all(**kwargs)
         self.data_dir = data_dir or self.data_dir
         self.data_list = data_list or self.data_list
+        logging.info(f"ImageDataset initialized with data_dir={self.data_dir}, data_list={self.data_list}") # @@
         if 'train' in self.data_list[0]:
             self.is_training = True
         else:
