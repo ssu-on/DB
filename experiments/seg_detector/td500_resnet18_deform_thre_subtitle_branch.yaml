@@ -2,6 +2,46 @@ import:
   - 'experiments/seg_detector/base_td500.yaml'
 package: []
 define:
+  - name: train_data
+    class: ImageDataset
+    data_dir:
+      - './datasets/Subtitles/'  # Subtitle dataset only for Stage 2
+    data_list:
+      - './datasets/Subtitles/train_list.txt'
+    processes:
+      - class: AugmentDetectionData
+        augmenter_args:
+          - ['Fliplr', 0.3]
+          - {'cls': 'Affine', 'rotate': [-3, 3]}
+          - ['Resize', [0.7, 1.4]]
+        only_resize: False
+        keep_ratio: False
+      - class: RandomCropData
+        size: [736, 736]
+        max_tries: 10
+      - class: MakeICDARData
+      - class: MakeSegDetectionData
+      - class: MakeBorderMap
+      - class: NormalizeImage
+      - class: FilterKeys
+        superfluous: ['filename', 'shape', 'is_training']
+
+  - name: validate_data
+    class: ImageDataset
+    data_dir:
+      - './datasets/Subtitles/'
+    data_list:
+      - './datasets/Subtitles/test_list.txt'
+    processes:
+      - class: AugmentDetectionData
+        augmenter_args:
+          - ['Resize', {'width': 736, 'height': 736}]
+        only_resize: True
+        keep_ratio: True
+      - class: MakeICDARData
+      - class: MakeSegDetectionData
+      - class: NormalizeImage
+
   - name: 'Experiment'
     class: Experiment
     structure: 
@@ -108,44 +148,4 @@ define:
         log_interval: 100
 
     evaluation: *validate
-
-  - name: train_data
-    class: ImageDataset
-    data_dir:
-      - './datasets/Subtitles/'  # Subtitle dataset only for Stage 2
-    data_list:
-      - './datasets/Subtitles/train_list.txt'
-    processes:
-      - class: AugmentDetectionData
-        augmenter_args:
-          - ['Fliplr', 0.3]
-          - {'cls': 'Affine', 'rotate': [-3, 3]}
-          - ['Resize', [0.7, 1.4]]
-        only_resize: False
-        keep_ratio: False
-      - class: RandomCropData
-        size: [736, 736]
-        max_tries: 10
-      - class: MakeICDARData
-      - class: MakeSegDetectionData
-      - class: MakeBorderMap
-      - class: NormalizeImage
-      - class: FilterKeys
-        superfluous: ['filename', 'shape', 'is_training']
-
-  - name: validate_data
-    class: ImageDataset
-    data_dir:
-      - './datasets/Subtitles/'
-    data_list:
-      - './datasets/Subtitles/test_list.txt'
-    processes:
-      - class: AugmentDetectionData
-        augmenter_args:
-          - ['Resize', {'width': 736, 'height': 736}]
-        only_resize: True
-        keep_ratio: True
-      - class: MakeICDARData
-      - class: MakeSegDetectionData
-      - class: NormalizeImage
 
