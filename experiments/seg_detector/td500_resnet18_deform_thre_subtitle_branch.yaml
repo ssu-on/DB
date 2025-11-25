@@ -5,7 +5,7 @@ define:
   - name: train_data
     class: ImageDataset
     data_dir:
-      - './datasets/Subtitles/'  # Subtitle dataset only for Stage 2
+      - './datasets/Subtitles'  # Subtitle dataset only for Stage 2
     data_list:
       - './datasets/Subtitles/train_list.txt'
     processes:
