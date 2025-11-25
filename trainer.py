@@ -171,6 +171,7 @@ class Trainer:
             pred = model.forward(batch, training=False)
             output = self.structure.representer.represent(batch, pred)
             # raw_metric, interested = self.structure.measurer.validate_measure(batch, output)
+            result = self.structure.measurer.validate_measure(batch, output)
             if isinstance(result, tuple) and len(result) == 2:
                 raw_metric, interested = result
             else:
