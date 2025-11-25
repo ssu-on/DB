@@ -6,8 +6,10 @@ define:
     class: ImageDataset
     data_dir:
       - './datasets/Subtitles/'
+      - './datasets/TD500/'
     data_list:
       - './datasets/Subtitles/train_list.txt'
+      - './datasets/TD500/train_list.txt'
     processes:
       - class: AugmentDetectionData
         augmenter_args:
@@ -30,8 +32,10 @@ define:
     class: ImageDataset
     data_dir:
       - './datasets/Subtitles/'
+      - './datasets/TD500/'
     data_list:
       - './datasets/Subtitles/test_list.txt'
+      - './datasets/TD500/test_list.txt'
     processes:
       - class: AugmentDetectionData
         augmenter_args:
@@ -79,7 +83,7 @@ define:
       model_saver:
         class: ModelSaver
         dir_path: model
-        save_interval: 18000
+        save_interval: 1000
         signal_path: save
       scheduler:
         class: OptimizerScheduler
@@ -90,8 +94,8 @@ define:
           weight_decay: 0.0001
         learning_rate:
           class: DecayLearningRate
-          epochs: 300
-      epochs: 300
+          epochs: 600
+      epochs: 600
     validation: &validate
       class: ValidationSettings
       data_loaders:
@@ -103,7 +107,7 @@ define:
           collect_fn:
             class: ICDARCollectFN
       visualize: false
-      interval: 4500
+      interval: 2000
       exempt: 1
     logger:
       class: Logger
