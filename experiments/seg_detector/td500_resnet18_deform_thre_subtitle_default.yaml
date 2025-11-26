@@ -6,10 +6,8 @@ define:
     class: ImageDataset
     data_dir:
       - './datasets/Subtitles/'
-      - './datasets/TD500/'
     data_list:
       - './datasets/Subtitles/train_list.txt'
-      - './datasets/TD500/train_list.txt'
     processes:
       - class: AugmentDetectionData
         augmenter_args:
@@ -32,10 +30,8 @@ define:
     class: ImageDataset
     data_dir:
       - './datasets/Subtitles/'
-      - './datasets/TD500/'
     data_list:
       - './datasets/Subtitles/test_list.txt'
-      - './datasets/TD500/test_list.txt'
     processes:
       - class: AugmentDetectionData
         augmenter_args:
@@ -94,8 +90,8 @@ define:
           weight_decay: 0.0001
         learning_rate:
           class: DecayLearningRate
-          epochs: 600
-      epochs: 600
+          epochs: 150
+      epochs: 150
     validation: &validate
       class: ValidationSettings
       data_loaders:
