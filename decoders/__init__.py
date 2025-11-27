@@ -1,4 +1,4 @@
-from .seg_detector import SegDetector
+from .seg_detector import SegDetector, SubtitleSegDetector
 from .seg_detector_asf import SegSpatialScaleDetector
 from .dice_loss import DiceLoss
 from .pss_loss import PSS_Loss

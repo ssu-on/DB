@@ -2,6 +2,7 @@ import sys
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class SegDetectorLossBuilder():
@@ -261,4 +262,97 @@ class L1LeakyDiceLoss(nn.Module):
             pred['thresh'], batch['thresh_map'], batch['thresh_mask'])
         metrics.update(**l1_metric, thresh_loss=thresh_loss)
         loss = main_loss + thresh_loss + l1_loss * self.l1_scale
+        return loss, metrics
+
+
+class SubtitleBranchLoss(nn.Module):
+    """
+    Subtitle-only loss for the subtitle style head.
+
+    L = L_bce(S, gt_subtitle) + lambda_style * L_intra(E)
+
+    - S: subtitle likelihood map ('subtitle_s'), resized to match gt resolution.
+    - E: pixel-level style embedding ('subtitle_embedding'), defined on top of F5.
+    - gt_subtitle: subtitle region mask (batch['gt']); for Stage 2 this is subtitle-only.
+    """
+
+    def __init__(self, bce_scale: float = 1.0, style_scale: float = 0.1, eps: float = 1e-6):
+        super().__init__()
+        from .balance_cross_entropy_loss import BalanceCrossEntropyLoss
+        self.bce_loss_fn = BalanceCrossEntropyLoss()
+        self.bce_scale = bce_scale
+        self.style_scale = style_scale
+        self.eps = eps
+
+    def _style_variance_loss(self, embedding: torch.Tensor, subtitle_mask: torch.Tensor):
+        """
+        Per-frame subtitle style variance:
+        for each image, compute the variance of pixel embeddings inside subtitle regions.
+        """
+        N, C, H, W = embedding.shape
+        # subtitle_mask: (N, 1, H, W) or (N, H, W)
+        if subtitle_mask.dim() == 4:
+            subtitle_mask_ = subtitle_mask.squeeze(1)
+        else:
+            subtitle_mask_ = subtitle_mask
+
+        total_var = embedding.new_zeros(())
+        count = 0
+
+        for b in range(N):
+            mask = (subtitle_mask_[b] > 0.5)
+            num_pixels = mask.sum().item()
+            if num_pixels < 1:
+                continue
+
+            feat_b = embedding[b]  # (C, H, W)
+            feat_flat = feat_b.view(C, -1)
+            mask_flat = mask.view(-1)
+            feat_sub = feat_flat[:, mask_flat]  # (C, M)
+            if feat_sub.numel() == 0:
+                continue
+            mean = feat_sub.mean(dim=1, keepdim=True)  # (C, 1)
+            var = ((feat_sub - mean) ** 2).sum() / (feat_sub.shape[1] + self.eps)
+            total_var = total_var + var
+            count += 1
+
+        if count == 0:
+            return embedding.new_zeros(())
+        return total_var / count
+
+    def forward(self, pred, batch):
+        assert isinstance(pred, dict), "SubtitleBranchLoss expects dict prediction"
+        if "subtitle_s" not in pred or "subtitle_embedding" not in pred:
+            raise KeyError("SubtitleBranchLoss requires 'subtitle_s' and 'subtitle_embedding' in pred")
+
+        s_map = pred["subtitle_s"]              # (N, 1, Hs, Ws)
+        e_map = pred["subtitle_embedding"]      # (N, D, He, We)
+
+        gt = batch["gt"].float()               # (N, 1, Hg, Wg)
+        mask = batch.get("mask", None)
+
+        # Resize gt/mask to match S/E resolution (use nearest to preserve binary nature)
+        target_size = s_map.shape[-2:]
+        gt_small = F.interpolate(gt, size=target_size, mode="nearest")
+        if mask is not None:
+            if mask.dim() == 3:
+                mask_small = F.interpolate(mask.unsqueeze(1).float(), size=target_size, mode="nearest")
+            else:
+                mask_small = F.interpolate(mask.float(), size=target_size, mode="nearest")
+        else:
+            mask_small = torch.ones_like(gt_small)
+
+        # 1) BCE loss on subtitle likelihood map
+        bce_loss = self.bce_loss_fn(s_map, gt_small, mask_small)
+
+        # 2) Style consistency loss (variance inside subtitle regions)
+        style_loss = self._style_variance_loss(e_map, gt_small)
+
+        loss = self.bce_scale * bce_loss + self.style_scale * style_loss
+
+        metrics = dict(
+            subtitle_loss=loss.detach(),
+            subtitle_bce=bce_loss.detach(),
+            subtitle_style=style_loss.detach(),
+        )
         return loss, metrics

@@ -2,7 +2,9 @@ from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+
 BatchNorm2d = nn.BatchNorm2d
+
 
 class SegDetector(nn.Module):
     def __init__(self,
@@ -150,3 +152,114 @@ class SegDetector(nn.Module):
 
     def step_function(self, x, y):
         return torch.reciprocal(1 + torch.exp(-self.k * (x - y)))
+
+
+class SubtitleSegDetector(nn.Module):
+    """
+    Wrapper decoder that keeps the original SegDetector head intact
+    and adds a subtitle-specific branch on top of the highest-level
+    backbone feature (F5).
+
+    - DBNet text head (binary / thresh / thresh_binary) is unchanged.
+    - Subtitle branch uses FeatureAdapter(F5) -> SubtitleStyleHead(F_sub).
+    - During training, losses can supervise subtitle_s and subtitle_embedding.
+    - During inference, a subtitle_binary map is produced for evaluation.
+    """
+
+    def __init__(
+        self,
+        in_channels=[64, 128, 256, 512],
+        inner_channels=256,
+        k=10,
+        bias=False,
+        adaptive=True,
+        smooth=False,
+        serial=False,
+        adapter_channels: int = 256,
+        embed_dim: int = 32,
+        subtitle_thresh: float = 0.5,
+        *args,
+        **kwargs
+    ):
+        super().__init__()
+        # Original DBNet decoder (text detection head)
+        self.detector = SegDetector(
+            in_channels=in_channels,
+            inner_channels=inner_channels,
+            k=k,
+            bias=bias,
+            adaptive=adaptive,
+            smooth=smooth,
+            serial=serial,
+            *args,
+            **kwargs,
+        )
+
+        # Subtitle branch: Feature Adapter + Subtitle Style Head
+        from .subtitle_style_head import FeatureAdapter, SubtitleStyleHead
+
+        self.feature_adapter = FeatureAdapter(
+            in_channels=in_channels[-1],
+            out_channels=adapter_channels,
+        )
+        self.subtitle_head = SubtitleStyleHead(
+            in_channels=adapter_channels,
+            embed_dim=embed_dim,
+        )
+
+        # Threshold for converting subtitle probability S into a hard mask
+        # when constructing subtitle_binary (= text_mask AND (S > τ)).
+        self.subtitle_thresh = subtitle_thresh
+
+    def forward(self, features, *args, **kwargs):
+        """
+        Args:
+            features: (c2, c3, c4, c5) from backbone.
+
+        Returns:
+            pred: dict with at least:
+              - 'binary', 'thresh', 'thresh_binary' (from original SegDetector during training)
+              - 'subtitle_s': subtitle likelihood map (upsampled to binary size)
+              - 'subtitle_embedding': pixel-level style embedding map at F5 resolution
+              - 'subtitle_binary': subtitle mask = binary AND (subtitle_s > τ)
+        """
+        assert isinstance(features, (list, tuple)) and len(features) == 4, \
+            "SubtitleSegDetector expects backbone features (c2, c3, c4, c5)"
+        c2, c3, c4, c5 = features
+
+        # 1) Run original DBNet head
+        base_pred = self.detector(features, *args, **kwargs)
+
+        if isinstance(base_pred, dict):
+            pred = base_pred
+            binary = base_pred.get("binary", None)
+        else:
+            binary = base_pred
+            pred = OrderedDict(binary=binary)
+
+        # 2) Subtitle branch: Feature Adapter on F5 + Subtitle Style Head
+        f_sub = self.feature_adapter(c5)
+        style_out = self.subtitle_head(f_sub)
+        s_map = style_out["subtitle_s"]            # (N, 1, H5, W5)
+        e_map = style_out["subtitle_embedding"]    # (N, D, H5, W5)
+
+        # 3) Resize S-map to match DBNet binary resolution (usually 1/4)
+        if binary is not None:
+            target_size = binary.shape[-2:]
+            s_resized = torch.nn.functional.interpolate(
+                s_map, size=target_size, mode="bilinear", align_corners=False
+            )
+        else:
+            s_resized = s_map
+
+        # 4) Build subtitle_binary = text_binary AND (S > τ)
+        if binary is not None:
+            hard_s = (s_resized > self.subtitle_thresh).float()
+            subtitle_binary = binary * hard_s
+            pred["subtitle_binary"] = subtitle_binary
+
+        # 5) Expose intermediate subtitle outputs for loss & analysis
+        pred["subtitle_s"] = s_resized
+        pred["subtitle_embedding"] = e_map
+
+        return pred
