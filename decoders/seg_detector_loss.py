@@ -284,6 +284,22 @@ class SubtitleBranchLoss(nn.Module):
         self.style_scale = style_scale
         self.eps = eps
 
+    def _to_tensor(self, value, device, dtype=torch.float32):
+        """
+        Robustly convert list / numpy / tensor to a batched tensor on the right device.
+        This matches the behavior used in SubtitleRefinedL1BalanceCELoss.
+        """
+        import numpy as np
+
+        if isinstance(value, torch.Tensor):
+            return value.to(device=device, dtype=dtype)
+        if isinstance(value, np.ndarray):
+            return torch.from_numpy(value).to(device=device, dtype=dtype)
+        if isinstance(value, (list, tuple)):
+            tensors = [self._to_tensor(v, device, dtype) for v in value]
+            return torch.stack(tensors, dim=0)
+        return torch.as_tensor(value, device=device, dtype=dtype)
+
     def _style_variance_loss(self, embedding: torch.Tensor, subtitle_mask: torch.Tensor):
         """
         Per-frame subtitle style variance:
@@ -328,17 +344,22 @@ class SubtitleBranchLoss(nn.Module):
         s_map = pred["subtitle_s"]              # (N, 1, Hs, Ws)
         e_map = pred["subtitle_embedding"]      # (N, D, He, We)
 
-        gt = batch["gt"].float()               # (N, 1, Hg, Wg)
-        mask = batch.get("mask", None)
+        # batch['gt'], batch['mask'] may be list / numpy / tensor depending on loader.
+        # Convert them robustly to tensors on the same device as s_map.
+        device = s_map.device
+        dtype = s_map.dtype
+        gt = self._to_tensor(batch["gt"], device=device, dtype=dtype)   # (N, 1, Hg, Wg)
+        mask_raw = batch.get("mask", None)
 
         # Resize gt/mask to match S/E resolution (use nearest to preserve binary nature)
         target_size = s_map.shape[-2:]
         gt_small = F.interpolate(gt, size=target_size, mode="nearest")
-        if mask is not None:
+        if mask_raw is not None:
+            mask = self._to_tensor(mask_raw, device=device, dtype=dtype)
             if mask.dim() == 3:
-                mask_small = F.interpolate(mask.unsqueeze(1).float(), size=target_size, mode="nearest")
+                mask_small = F.interpolate(mask.unsqueeze(1), size=target_size, mode="nearest")
             else:
-                mask_small = F.interpolate(mask.float(), size=target_size, mode="nearest")
+                mask_small = F.interpolate(mask, size=target_size, mode="nearest")
         else:
             mask_small = torch.ones_like(gt_small)
 
