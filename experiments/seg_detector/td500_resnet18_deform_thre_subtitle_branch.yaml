@@ -99,13 +99,13 @@ define:
             class: OptimizerScheduler
             optimizer: "SGD"
             optimizer_args:
-                lr: 0.0003  # Subtitle branch만 학습하므로 더 낮은 learning rate 사용
+                lr: 0.0003  # optimizer 초기 lr (실제 lr는 learning_rate 설정을 따름)
                 momentum: 0.9
                 weight_decay: 0.0001
             learning_rate:  
                 class: DecayLearningRate
-                epochs: 150  # Subtitle branch 학습은 더 적은 epoch
-                warmup_steps: 1500
+                lr: 0.0003        # <-- Stage 2용 실제 base learning rate
+                epochs: 150       # Subtitle branch 학습은 더 적은 epoch
         epochs: 150
 
     validation: &validate
