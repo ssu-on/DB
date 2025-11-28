@@ -351,15 +351,15 @@ class SubtitleBranchLoss(nn.Module):
         gt = self._to_tensor(batch["gt"], device=device, dtype=dtype)   # (N, 1, Hg, Wg)
         mask_raw = batch.get("mask", None)
 
-        # Resize gt/mask to match S/E resolution (use nearest to preserve binary nature)
-        target_size = s_map.shape[-2:]
-        gt_small = F.interpolate(gt, size=target_size, mode="nearest")
+        # Resize gt/mask to match S resolution for BCE term (use nearest to preserve binary nature)
+        target_size_s = s_map.shape[-2:]
+        gt_small = F.interpolate(gt, size=target_size_s, mode="nearest")
         if mask_raw is not None:
             mask = self._to_tensor(mask_raw, device=device, dtype=dtype)
             if mask.dim() == 3:
-                mask_small = F.interpolate(mask.unsqueeze(1), size=target_size, mode="nearest")
+                mask_small = F.interpolate(mask.unsqueeze(1), size=target_size_s, mode="nearest")
             else:
-                mask_small = F.interpolate(mask, size=target_size, mode="nearest")
+                mask_small = F.interpolate(mask, size=target_size_s, mode="nearest")
         else:
             mask_small = torch.ones_like(gt_small)
 
@@ -367,7 +367,10 @@ class SubtitleBranchLoss(nn.Module):
         bce_loss = self.bce_loss_fn(s_map, gt_small, mask_small)
 
         # 2) Style consistency loss (variance inside subtitle regions)
-        style_loss = self._style_variance_loss(e_map, gt_small)
+        #    Use gt resized to the embedding resolution, which may differ from s_map.
+        target_size_e = e_map.shape[-2:]
+        gt_for_style = F.interpolate(gt, size=target_size_e, mode="nearest")
+        style_loss = self._style_variance_loss(e_map, gt_for_style)
 
         loss = self.bce_scale * bce_loss + self.style_scale * style_loss
 
