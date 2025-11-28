@@ -385,5 +385,10 @@ class SubtitleBranchLoss(nn.Module):
             subtitle_loss=loss.detach(),
             subtitle_bce=bce_loss.detach(),
             subtitle_style=style_loss.detach(),
+            subtitle_s_mean=s_map.mean().detach(),
         )
+        # Optional: monitor how many pixels survive in subtitle_binary
+        if "subtitle_binary" in pred:
+            subtitle_binary = pred["subtitle_binary"]
+            metrics["subtitle_bin_mean"] = subtitle_binary.mean().detach()
         return loss, metrics

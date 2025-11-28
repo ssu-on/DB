@@ -59,7 +59,7 @@ define:
                     k: 50
                     adapter_channels: 256
                     embed_dim: 32
-                    subtitle_thresh: 0.5
+                    subtitle_thresh: 0.3   # 더 많은 subtitle 후보를 통과시키기 위해 약간 낮춤
                 loss_class: SubtitleBranchLoss
                 loss_kwargs:
                     bce_scale: 1.0
@@ -70,8 +70,8 @@ define:
             # GT가 subtitle만 라벨링되어 있으면, scene text 검출은 전부 FP로 들어가게 됨
             dest: subtitle_binary
             max_candidates: 1000
-            thresh: 0.25        # @@
-            box_thresh: 0.6     # @@
+            thresh: 0.2         # subtitle_binary는 이미 hard mask라 다소 낮게 설정
+            box_thresh: 0.5     # 박스 필터링을 약간 완화
         measurer:  
             class: QuadMeasurer
         visualizer:  
