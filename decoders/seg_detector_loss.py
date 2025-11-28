@@ -356,12 +356,19 @@ class SubtitleBranchLoss(nn.Module):
         gt_small = F.interpolate(gt, size=target_size_s, mode="nearest")
         if mask_raw is not None:
             mask = self._to_tensor(mask_raw, device=device, dtype=dtype)
-            if mask.dim() == 3:
-                mask_small = F.interpolate(mask.unsqueeze(1), size=target_size_s, mode="nearest")
-            else:
-                mask_small = F.interpolate(mask, size=target_size_s, mode="nearest")
+            # BalanceCrossEntropyLoss expects mask of shape (N, H, W)
+            # so we always squeeze the channel dimension after interpolation.
+            if mask.dim() == 3:  # (N, H, W)
+                mask_small = F.interpolate(
+                    mask.unsqueeze(1), size=target_size_s, mode="nearest"
+                ).squeeze(1)
+            else:  # (N, 1, H, W) or similar
+                mask_small = F.interpolate(
+                    mask, size=target_size_s, mode="nearest"
+                ).squeeze(1)
         else:
-            mask_small = torch.ones_like(gt_small)
+            # Default: use all pixels (mask = 1) with shape (N, H, W)
+            mask_small = torch.ones_like(gt_small[:, 0, :, :])
 
         # 1) BCE loss on subtitle likelihood map
         bce_loss = self.bce_loss_fn(s_map, gt_small, mask_small)
