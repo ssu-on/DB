@@ -296,7 +296,7 @@ class SubtitleBranchLoss(nn.Module):
         if isinstance(value, np.ndarray):
             return torch.from_numpy(value).to(device=device, dtype=dtype)
         if isinstance(value, (list, tuple)):
-            tensors = [SubtitleContrastiveLoss._to_tensor(v, device, dtype) for v in value]
+            tensors = [SubtitleBranchLoss._to_tensor(v, device, dtype) for v in value]
             return torch.stack(tensors, dim=0)
         return torch.as_tensor(value, device=device, dtype=dtype)
 
