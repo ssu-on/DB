@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 from shapely.geometry import Polygon
 import pyclipper
+import torch
+import torch.nn.functional as F
 from concern.config import Configurable, State
 
 class SegDetectorRepresenter(Configurable):
@@ -33,20 +35,50 @@ class SegDetectorRepresenter(Configurable):
             shape: the original shape of images.
             filename: the original filenames of images.
         pred:
-            binary: text region segmentation map, with shape (N, 1, H, W)
-            thresh: [if exists] thresh hold prediction with shape (N, 1, H, W)
-            thresh_binary: [if exists] binarized with threshhold, (N, 1, H, W)
+            For standard DBNet:
+                binary: text region segmentation map, with shape (N, 1, H, W)
+                thresh: [if exists] threshold prediction with shape (N, 1, H, W)
+                thresh_binary: [if exists] binarized with threshold, (N, 1, H, W)
+
+            For our subtitle specialization branch (Stage 2):
+                subtitle_s: subtitle likelihood map, (N, 1, Hs, Ws)
+                subtitle_embedding: style embedding map, (N, D, He, We)
+
+        반환:
+            기존 DBNet와의 호환을 위해 (boxes_batch, scores_batch)를 기본으로 유지하고,
+            subtitle branch가 있는 경우에는 subtitle 전용 마스크/boxes를 추가 반환한다.
         '''
         images = batch['image']
+
+        # ---- 1) 기본 text mask (DBNet binary) ----
         if isinstance(_pred, dict):
             pred = _pred[self.dest]
         else:
             pred = _pred
-        segmentation = self.binarize(pred)
+        segmentation = self.binarize(pred)  # text_mask (N, 1, H, W) bool tensor
+
+        # ---- 2) Subtitle mask 준비: text_mask ∧ (S > τ_sub) ----
+        subtitle_binary_resized = None
+        if isinstance(_pred, dict) and 'subtitle_s' in _pred:
+            subtitle_s = _pred['subtitle_s']          # (N, 1, Hs, Ws)
+            # subtitle thresh는 text thresh와 별도의 hyper-parameter로 관리하는 것이 맞지만,
+            # 여기서는 representer의 thresh를 재사용한다.
+            subtitle_binary = (subtitle_s > self.thresh).float()  # (N, 1, Hs, Ws)
+            # text binary map(pred)와 크기가 다를 수 있으므로, text_binary 해상도에 맞춰 up/down-sample.
+            text_h, text_w = pred.shape[-2:]
+            subtitle_binary_resized = F.interpolate(
+                subtitle_binary, size=(text_h, text_w), mode="nearest"
+            ) > 0.5  # (N, 1, H, W) bool
+
         boxes_batch = []
         scores_batch = []
+        subtitle_boxes_batch = []
+        subtitle_scores_batch = []
+
         for batch_index in range(images.size(0)):
             height, width = batch['shape'][batch_index]
+
+            # Text detection boxes (기존 DBNet)
             if is_output_polygon:
                 boxes, scores = self.polygons_from_bitmap(
                     pred[batch_index],
@@ -57,6 +89,30 @@ class SegDetectorRepresenter(Configurable):
                     segmentation[batch_index], width, height)
             boxes_batch.append(boxes)
             scores_batch.append(scores)
+
+            # Subtitle 전용 boxes (있는 경우에만)
+            if subtitle_binary_resized is not None:
+                # 최종 subtitle mask = text_mask ∧ subtitle_binary
+                subtitle_mask = (segmentation[batch_index] &
+                                 subtitle_binary_resized[batch_index]).float()
+                if is_output_polygon:
+                    s_boxes, s_scores = self.polygons_from_bitmap(
+                        pred[batch_index],
+                        subtitle_mask,
+                        width, height)
+                else:
+                    s_boxes, s_scores = self.boxes_from_bitmap(
+                        pred[batch_index],
+                        subtitle_mask,
+                        width, height)
+                subtitle_boxes_batch.append(s_boxes)
+                subtitle_scores_batch.append(s_scores)
+
+        # subtitle branch가 있는 경우, subtitle 결과까지 함께 반환
+        if subtitle_binary_resized is not None:
+            return (boxes_batch, scores_batch,
+                    subtitle_boxes_batch, subtitle_scores_batch)
+
         return boxes_batch, scores_batch
     
     def binarize(self, pred):

@@ -23,8 +23,18 @@ class QuadMeasurer(Configurable):
         results = []
         gt_polyons_batch = batch['polygons']
         ignore_tags_batch = batch['ignore_tags']
-        pred_polygons_batch = np.array(output[0])
-        pred_scores_batch = np.array(output[1])
+
+        # output 형식:
+        # - 기본 DBNet: (boxes_batch, scores_batch)
+        # - subtitle branch 포함: (boxes_batch, scores_batch,
+        #                          subtitle_boxes_batch, subtitle_scores_batch)
+        # subtitle branch가 있으면 subtitle 결과를 GT와 비교하도록 한다.
+        if len(output) >= 4:
+            pred_polygons_batch = np.array(output[2])
+            pred_scores_batch = np.array(output[3])
+        else:
+            pred_polygons_batch = np.array(output[0])
+            pred_scores_batch = np.array(output[1])
         for polygons, pred_polygons, pred_scores, ignore_tags in\
                 zip(gt_polyons_batch, pred_polygons_batch, pred_scores_batch, ignore_tags_batch):
             gt = [dict(points=polygons[i], ignore=ignore_tags[i])

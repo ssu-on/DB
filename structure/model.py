@@ -34,6 +34,12 @@ class SegDetectorModel(nn.Module):
         super(SegDetectorModel, self).__init__()
         from decoders.seg_detector_loss import SegDetectorLossBuilder
 
+        # Keep the raw args for later (e.g., deciding trainable params)
+        self.args = args
+        # Whether we are in Stage 2 subtitle-only training mode.
+        # In this mode, optimizer should only update subtitle branch parameters.
+        self.stage2_subtitle_only = args.get('stage2_subtitle_only', False)
+
         self.model = BasicModel(args)
         # for loading models
         self.model = parallelize(self.model, distributed, local_rank)
@@ -64,3 +70,38 @@ class SegDetectorModel(nn.Module):
             loss, metrics = loss_with_metrics
             return loss, pred, metrics
         return pred
+
+    # ---- Stage 2: subtitle-only optimizer parameter groups ----
+    # Trainer will use this, if available, instead of model.parameters().
+    def get_trainable_parameters(self):
+        """
+        Return parameters to be optimized.
+
+        - Default: all parameters (Stage 1 or generic training)
+        - Stage 2 (subtitle-only): only subtitle branch parameters
+          on top of F5, so that backbone / DBNet heads stay frozen.
+        """
+        if not self.stage2_subtitle_only:
+            return self.parameters()
+
+        # Model is wrapped by DataParallel / DistributedDataParallel
+        backbone_decoder = self.model.module
+        decoder = backbone_decoder.decoder
+
+        # If subtitle branch is not enabled in decoder, fall back safely.
+        if not getattr(decoder, 'subtitle_branch', False):
+            return self.parameters()
+
+        params = []
+        if hasattr(decoder, 'subtitle_adapter'):
+            params.extend(list(decoder.subtitle_adapter.parameters()))
+        if hasattr(decoder, 'subtitle_s_head'):
+            params.extend(list(decoder.subtitle_s_head.parameters()))
+        if hasattr(decoder, 'subtitle_e_head'):
+            params.extend(list(decoder.subtitle_e_head.parameters()))
+
+        # Fallback: if nothing was collected, do not crash.
+        if not params:
+            return self.parameters()
+
+        return params

@@ -58,8 +58,13 @@ class Trainer:
             self.steps = epoch * self.total + iter_delta
 
         # Init start epoch and iter
-        optimizer = self.experiment.train.scheduler.create_optimizer(
-            model.parameters())
+        # If the model provides a custom trainable-parameter selector
+        # (e.g. Stage 2 subtitle-only training), use it.
+        if hasattr(model, 'get_trainable_parameters'):
+            parameters = model.get_trainable_parameters()
+        else:
+            parameters = model.parameters()
+        optimizer = self.experiment.train.scheduler.create_optimizer(parameters)
 
         self.logger.report_time('Init')
 

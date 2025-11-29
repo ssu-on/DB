@@ -16,8 +16,19 @@ define:
                     adaptive: True
                     in_channels: [64, 128, 256, 512]
                     k: 50
-                # Baseline comparison: original DBNet-style subtitle finetune
-                loss_class: L1BalanceCELoss
+                    # Stage 2 subtitle specialization branch on top of F5
+                    subtitle_branch: True
+                    subtitle_channels: 256
+                    subtitle_embed_dim: 32
+                # Stage 2: subtitle-only loss (no DBNet loss)
+                loss_class: SubtitleBranchLoss
+                # Optionally, tune loss weights for BCE vs style variance
+                loss_kwargs:
+                    bce_scale: 1.0
+                    style_scale: 0.1
+                # Let the model know this is Stage 2 so that optimizer
+                # only updates subtitle branch parameters.
+                stage2_subtitle_only: True
 
         representer:
             class: SegDetectorRepresenter
@@ -38,8 +49,7 @@ define:
             class: Checkpoint
             start_epoch: 0
             start_iter: 0
-            # 1-stage 학습이 끝난 resnet18 모델을 이어받아 subtitle 데이터만으로 fine-tuning
-            # 이미 다른 체크포인트를 쓰고 있다면, train.py 실행할 때 --resume 로 덮어써도 됨
+            # Stage 1 text detection checkpoint (DBNet) used as frozen backbone
             resume: './outputs/model/td500_resnet18'
         model_saver: 
             class: ModelSaver
@@ -80,5 +90,6 @@ define:
         log_interval: 50
 
     evaluation: *validate
+
 
 

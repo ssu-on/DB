@@ -4,17 +4,26 @@ import torch
 import torch.nn as nn
 BatchNorm2d = nn.BatchNorm2d
 
+
 class SegDetector(nn.Module):
     def __init__(self,
                  in_channels=[64, 128, 256, 512],
                  inner_channels=256, k=10,
                  bias=False, adaptive=False, smooth=False, serial=False,
+                 # Subtitle specialization (Stage 2) branch - all optional
+                 subtitle_branch: bool = False,
+                 subtitle_channels: int = 256,
+                 subtitle_embed_dim: int = 32,
                  *args, **kwargs):
         '''
         bias: Whether conv layers have bias or not.
         adaptive: Whether to use adaptive threshold training or not.
         smooth: If true, use bilinear instead of deconv.
         serial: If true, thresh prediction will combine segmentation result as input.
+
+        subtitle_branch:
+            If True, enable subtitle specialization head on top of F5 only.
+            This is used in Stage 2 (backbone frozen) training.
         '''
         super(SegDetector, self).__init__()
         self.k = k
@@ -61,6 +70,27 @@ class SegDetector(nn.Module):
                     inner_channels, serial=serial, smooth=smooth, bias=bias)
             self.thresh.apply(self.weights_init)
 
+        # ----- Subtitle specialization branch (Stage 2) -----
+        # This head is completely optional and only used when
+        # subtitle_branch=True in decoder_args.
+        self.subtitle_branch = subtitle_branch
+        if self.subtitle_branch:
+            # Feature adapter on top of highest-level feature F5 only.
+            # A(F5) = Conv1x1 → ReLU → Conv1x1
+            self.subtitle_adapter = nn.Sequential(
+                nn.Conv2d(in_channels[-1], subtitle_channels, kernel_size=1, bias=bias),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(subtitle_channels, subtitle_channels, kernel_size=1, bias=bias),
+            )
+            # Subtitle likelihood map S-map: sigmoid(Conv1x1(F_sub))
+            self.subtitle_s_head = nn.Conv2d(
+                subtitle_channels, 1, kernel_size=1, bias=True
+            )
+            # Style embedding map E-map: Conv1x1(F_sub) -> D×H×W
+            self.subtitle_e_head = nn.Conv2d(
+                subtitle_channels, subtitle_embed_dim, kernel_size=1, bias=True
+            )
+
         self.in5.apply(self.weights_init)
         self.in4.apply(self.weights_init)
         self.in3.apply(self.weights_init)
@@ -69,6 +99,13 @@ class SegDetector(nn.Module):
         self.out4.apply(self.weights_init)
         self.out3.apply(self.weights_init)
         self.out2.apply(self.weights_init)
+
+        if self.subtitle_branch:
+            self.subtitle_adapter.apply(self.weights_init)
+            # Heads use default init; S-head is small and does not require
+            # Kaiming init, but we keep consistency.
+            self.subtitle_s_head.apply(self.weights_init)
+            self.subtitle_e_head.apply(self.weights_init)
 
     def weights_init(self, m):
         classname = m.__class__.__name__
@@ -131,13 +168,17 @@ class SegDetector(nn.Module):
         p2 = self.out2(out2)
 
         fuse = torch.cat((p5, p4, p3, p2), 1)
-        # this is the pred module, not binarization module; 
+        # this is the pred module, not binarization module;
         # We do not correct the name due to the trained model.
         binary = self.binarize(fuse)
-        if self.training:
-            result = OrderedDict(binary=binary)
-        else:
+
+        # In eval mode, keep the original DBNet behaviour for compatibility:
+        # return only text probability map.
+        if not self.training and not self.subtitle_branch:
             return binary
+
+        result = OrderedDict(binary=binary)
+
         if self.adaptive and self.training:
             if self.serial:
                 fuse = torch.cat(
@@ -146,6 +187,22 @@ class SegDetector(nn.Module):
             thresh = self.thresh(fuse)
             thresh_binary = self.step_function(binary, thresh)
             result.update(thresh=thresh, thresh_binary=thresh_binary)
+
+        # ----- Subtitle specialization branch (Stage 2) -----
+        if self.subtitle_branch:
+            # F5-only adapter branch.
+            # IMPORTANT: detach c5 so that Stage 2 subtitle loss does NOT
+            # backpropagate into backbone / FPN / DBNet heads.
+            f5 = c5.detach()
+            f_sub = self.subtitle_adapter(f5)
+            subtitle_s = torch.sigmoid(self.subtitle_s_head(f_sub))
+            subtitle_embedding = self.subtitle_e_head(f_sub)
+
+            result.update(
+                subtitle_s=subtitle_s,
+                subtitle_embedding=subtitle_embedding,
+            )
+
         return result
 
     def step_function(self, x, y):
