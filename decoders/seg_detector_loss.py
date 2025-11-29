@@ -399,8 +399,8 @@ class SubtitleBranchLoss(nn.Module):
 
         # Inter loss
         L_inter = subtitle_feature.new_tensor(0.)
-        valid_scene = scene_weight.sum(dim=(2, 3)) > self.eps
-        valid_sub = intra_weight.sum(dim=(2, 3)) > self.eps
+        valid_scene = (scene_weight.sum(dim=(2, 3)) > self.eps).squeeze(1)
+        valid_sub = (intra_weight.sum(dim=(2, 3)) > self.eps).squeeze(1)
         valid_pairs = (valid_scene & valid_sub)
         if valid_pairs.any():
             sub_mean, _ = self._masked_mean(subtitle_feature, intra_weight)
