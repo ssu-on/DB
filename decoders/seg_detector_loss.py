@@ -5,9 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-# Import SubtitleRefinedL1BalanceCELoss from subtitle_refined_loss module
-from .subtitle_color_loss import SubtitleColorConsistencyLoss
-
 
 class SegDetectorLossBuilder():
     '''
@@ -269,196 +266,157 @@ class L1LeakyDiceLoss(nn.Module):
         loss = main_loss + thresh_loss + l1_loss * self.l1_scale
         return loss, metrics
 
-# @@ for subtitle branch loss
 class SubtitleBranchLoss(nn.Module):
-    '''
-    Loss function for subtitle branch.
-    
-    Combines:
-    1. Subtitle Binary Loss (BCE/Dice) - direct supervision for subtitle binary map
-    2. Color Embedding Loss - self-refinement for subtitle feature clustering
-    
-    Loss = L_subtitle_binary + λ * L_color_embedding
-    
-    This loss is designed for Stage 2 training where:
-    - backbone/fuse are frozen
-    - Only subtitle_fuse_branch + subtitle_binary_head + subtitle_color_embed_head are trained
-    '''
-    
-    def __init__(self, 
-                 binary_loss_type='bce',  # 'bce', 'dice', or 'bce+dice'
-                 lambda_color=0.3,
-                 negative_bce_alpha=0.5,  # Weight for scene text negative loss (critical for subtitle-only detection)
-                 text_binary_threshold=0.5,  # Threshold for detecting all text regions from main binary
-                 eps=1e-6,
-                 **kwargs):
-        super(SubtitleBranchLoss, self).__init__()
-        
-        from .dice_loss import DiceLoss
-        from .balance_cross_entropy_loss import BalanceCrossEntropyLoss
-        from .subtitle_color_loss import SubtitleColorConsistencyLoss
-        
-        self.binary_loss_type = binary_loss_type
-        self.lambda_color = lambda_color
-        self.negative_bce_alpha = negative_bce_alpha
-        self.text_binary_threshold = text_binary_threshold
-        # YAML에서 문자열로 들어올 수도 있으니 안전하게 float 캐스팅
+    """
+    Minimal subtitle-only loss:
+        L = L_sub_detect + λ_intra * L_intra + λ_inter * L_inter
+    """
+
+    def __init__(self,
+                 bce_weight=1.0,
+                 dice_weight=1.0,
+                 lambda_intra=1.0,
+                 lambda_inter=1.0,
+                 margin=0.5,
+                 text_binary_threshold=0.3,
+                 eps=1e-6):
+        super().__init__()
+        self.bce_weight = float(bce_weight)
+        self.dice_weight = float(dice_weight)
+        self.lambda_intra = float(lambda_intra)
+        self.lambda_inter = float(lambda_inter)
+        self.margin = float(margin)
+        self.text_binary_threshold = float(text_binary_threshold)
         self.eps = float(eps)
-        
-        # Binary loss components
-        if binary_loss_type == 'bce':
-            self.binary_loss = BalanceCrossEntropyLoss(**kwargs.get('bce_kwargs', {}))
-            self.use_dice = False
-        elif binary_loss_type == 'dice':
-            self.binary_loss = DiceLoss(eps=eps)
-            self.use_dice = True
-        elif binary_loss_type == 'bce+dice':
-            self.bce_loss = BalanceCrossEntropyLoss(**kwargs.get('bce_kwargs', {}))
-            self.dice_loss = DiceLoss(eps=eps)
-            self.use_dice = True
-        else:
-            raise ValueError(f"binary_loss_type must be 'bce', 'dice', or 'bce+dice', got {binary_loss_type}")
-        
-        # Color embedding loss
-        self.color_loss = SubtitleColorConsistencyLoss(**kwargs.get('color_kwargs', {}))
-    
-    def _to_tensor(self, value, device, dtype=torch.float32):
-        """Convert various input types to torch.Tensor."""
+
+    @staticmethod
+    def _to_tensor(value, device, dtype):
         if isinstance(value, torch.Tensor):
             return value.to(device=device, dtype=dtype)
         if isinstance(value, np.ndarray):
             return torch.from_numpy(value).to(device=device, dtype=dtype)
         if isinstance(value, (list, tuple)):
-            tensors = [self._to_tensor(v, device, dtype) for v in value]
+            tensors = [SubtitleContrastiveLoss._to_tensor(v, device, dtype) for v in value]
             return torch.stack(tensors, dim=0)
         return torch.as_tensor(value, device=device, dtype=dtype)
-    
+
+    def _dice_loss(self, pred, target, mask):
+        pred = pred * mask
+        target = target * mask
+        intersection = (pred * target).sum()
+        denom = pred.sum() + target.sum() + self.eps
+        dice = 1 - (2 * intersection + self.eps) / denom
+        return dice
+
+    def _masked_mean(self, feat, weight):
+        """feat: (N,C,H,W), weight: (N,1,H,W)."""
+        weight_sum = weight.sum(dim=(2, 3)).clamp_min(self.eps)
+        mean = (feat * weight).sum(dim=(2, 3)) / weight_sum
+        return mean, weight_sum
+
+    def _intra_loss(self, feat, weight):
+        # weight: (N,1,H,W)
+        if weight.sum() < self.eps:
+            return feat.new_tensor(0.)
+        mean, _ = self._masked_mean(feat, weight)
+        diff = (feat - mean[:, :, None, None]) ** 2
+        loss = (diff * weight).sum() / (weight.sum() * feat.size(1) + self.eps)
+        return loss
+
+    def _inter_loss(self, sub_feat, scene_feat, valid_mask):
+        """
+        sub_feat / scene_feat: (N,C)
+        valid_mask: bool mask indicating entries to consider
+        """
+        if valid_mask.sum() == 0:
+            return sub_feat.new_tensor(0.)
+        dist = torch.norm(sub_feat - scene_feat, dim=1)
+        dist = dist[valid_mask]
+        if dist.numel() == 0:
+            return sub_feat.new_tensor(0.)
+        loss = F.relu(self.margin - dist).mean()
+        return loss
+
     def forward(self, pred, batch):
-        """
-        Args:
-            pred: dict containing
-                - subtitle_binary: (N, 1, H, W) subtitle binary prediction
-                - subtitle_color_embedding: (N, C, H, W) subtitle color embedding
-            batch: dict containing
-                - gt: (N, 1, H, W) ground truth subtitle mask
-                - mask: (N, H, W) ignore mask
-        Returns:
-            (loss, metrics) tuple
-        """
         assert 'subtitle_binary' in pred, "subtitle_binary must be in pred"
-        assert 'subtitle_color_embedding' in pred, "subtitle_color_embedding must be in pred"
-        
+        assert 'subtitle_feature' in pred, "subtitle_feature must be in pred"
+
         subtitle_binary = pred['subtitle_binary']
-        subtitle_color_embedding = pred['subtitle_color_embedding']
-        
-        # Convert batch values to tensors (handle list/numpy array inputs)
+        subtitle_feature = pred['subtitle_feature']
+        binary_pred = pred.get('binary', None)
+
         device = subtitle_binary.device
         dtype = subtitle_binary.dtype
+
         gt = self._to_tensor(batch['gt'], device=device, dtype=dtype)
         mask = self._to_tensor(batch['mask'], device=device, dtype=dtype)
-        
-        # Ensure gt has shape (N, 1, H, W) and mask has shape (N, H, W)
+
         if gt.dim() == 3:
-            gt = gt.unsqueeze(1)  # (N, H, W) -> (N, 1, H, W)
-        if mask.dim() == 4 and mask.size(1) == 1:
-            mask = mask[:, 0]  # (N, 1, H, W) -> (N, H, W)
-        
-        # Subtitle mask (full resolution)
-        subtitle_mask = (gt.squeeze(1) > 0.5).float()  # (N, H, W)
-        
-        # Compute scene text mask: text regions that are NOT subtitle
-        # This is critical for subtitle-only detection - forces subtitle_binary to suppress scene text
-        scene_text_mask = None
-        binary_pred = pred.get('binary', None)
-        if binary_pred is not None and self.negative_bce_alpha > 0:
-            if binary_pred.dim() == 4:
-                binary_pred = binary_pred.squeeze(1)  # (N, 1, H, W) -> (N, H, W)
-            
-            # All text regions from main binary prediction
-            text_mask = (binary_pred.detach() > self.text_binary_threshold).float()  # (N, H, W)
-            
-            # Scene text = text but not subtitle
-            scene_text_mask = text_mask * (1.0 - subtitle_mask)  # (N, H, W)
-        
-        # Update batch with tensor values so color_loss receives tensors
-        batch_for_color = batch.copy()
-        batch_for_color['gt'] = gt
-        batch_for_color['mask'] = mask
-        
-        # Compute binary loss (subtitle positive supervision)
-        if self.binary_loss_type == 'bce':
-            binary_loss = self.binary_loss(subtitle_binary, gt, mask)
-        elif self.binary_loss_type == 'dice':
-            binary_loss = self.binary_loss(subtitle_binary, gt, mask)
-        elif self.binary_loss_type == 'bce+dice':
-            bce_loss = self.bce_loss(subtitle_binary, gt, mask)
-            dice_loss = self.dice_loss(subtitle_binary, gt, mask)
-            binary_loss = bce_loss + dice_loss
-        else:
-            raise ValueError(f"Invalid binary_loss_type: {self.binary_loss_type}")
-        
-        # CRITICAL: Scene text negative loss (forces subtitle_binary to output low values in scene text regions)
-        # This is essential for subtitle-only detection - prevents all text from being detected
-        negative_loss = None
-        subtitle_scene_overlap = None
-        if scene_text_mask is not None and self.negative_bce_alpha > 0:
-            # Use valid mask (ignore regions) for scene text mask
-            valid_scene_text_mask = scene_text_mask * mask  # (N, H, W)
-            
-            if valid_scene_text_mask.sum() > 0:
-                # Target: subtitle_binary should be 0 in scene text regions
-                zeros_gt = torch.zeros_like(subtitle_binary)  # (N, 1, H, W)
+            gt = gt.unsqueeze(1)
+        if mask.dim() == 2:
+            mask = mask.unsqueeze(1)
+        elif mask.dim() == 3 and mask.size(1) != 1:
+            mask = mask.unsqueeze(1)
+        mask = mask.float()
 
-                # NOTE:
-                # BalanceCrossEntropyLoss는 gt가 전부 0인 영역에서는
-                # positive_count=0, negative_count=0이 되어 항상 0 loss를 반환한다.
-                # 따라서 subtitle-negative 용도에는 맞지 않으므로,
-                # 여기서는 픽셀 단위 BCE를 직접 계산해서 사용한다.
-                bce_map = F.binary_cross_entropy(
-                    subtitle_binary, zeros_gt, reduction='none'
-                )[:, 0, :, :]  # (N, H, W)
+        subtitle_mask_full = (gt > 0.5).float()
+        valid_mask_full = mask
 
-                masked_bce = bce_map * valid_scene_text_mask  # (N, H, W)
-                negative_loss = masked_bce.sum() / (valid_scene_text_mask.sum() + self.eps)
+        # Detection loss
+        detect_loss = subtitle_binary.new_tensor(0.)
+        metrics = {}
+        if self.bce_weight > 0:
+            bce = F.binary_cross_entropy(subtitle_binary, subtitle_mask_full, reduction='none')
+            bce = (bce * valid_mask_full).sum() / (valid_mask_full.sum() + self.eps)
+            detect_loss = detect_loss + self.bce_weight * bce
+            metrics['subtitle_bce_loss'] = bce.detach()
+        if self.dice_weight > 0:
+            dice = self._dice_loss(subtitle_binary, subtitle_mask_full, valid_mask_full)
+            detect_loss = detect_loss + self.dice_weight * dice
+            metrics['subtitle_dice_loss'] = dice.detach()
 
-                # Logging용: subtitle_binary가 scene text 영역을 얼마나 subtitle로 잡는지 비율
-                with torch.no_grad():
-                    subtitle_pred_mask = (subtitle_binary.detach() > 0.5).float().squeeze(1)  # (N, H, W)
-                    overlap_pixels = (subtitle_pred_mask * scene_text_mask).sum()
-                    total_scene_pixels = scene_text_mask.sum()
-                    subtitle_scene_overlap = overlap_pixels / (total_scene_pixels + self.eps)
-        
-        # Compute color embedding loss (use updated batch with tensors)
-        # Include main binary prediction for scene text detection
-        # CRITICAL: Use 'subtitle_color_embedding' key to ensure loss supervises subtitle branch
-        color_pred = {
-            'subtitle_color_embedding': subtitle_color_embedding,  # Explicit key for subtitle branch
-            'binary': pred.get('binary', None)  # Main binary for scene text mask calculation
-        }
-        color_loss, color_metrics = self.color_loss(color_pred, batch_for_color)
-        
-        # Combine losses
-        total_loss = binary_loss + self.lambda_color * color_loss
-        if negative_loss is not None:
-            total_loss = total_loss + self.negative_bce_alpha * negative_loss
-        
-        # Build metrics
-        metrics = {
-            'subtitle_binary_loss': binary_loss.detach(),
-            'subtitle_color_loss': color_loss.detach(),
+        # Prepare downsampled masks for feature space
+        feat_h, feat_w = subtitle_feature.shape[-2:]
+        subtitle_mask_small = F.interpolate(subtitle_mask_full, size=(feat_h, feat_w), mode='nearest')
+        valid_mask_small = F.interpolate(valid_mask_full, size=(feat_h, feat_w), mode='nearest')
+
+        # Intra loss
+        intra_weight = subtitle_mask_small * valid_mask_small
+        L_intra = self._intra_loss(subtitle_feature, intra_weight)
+
+        # Scene text mask using main binary prediction
+        scene_weight = subtitle_feature.new_zeros_like(intra_weight)
+        if binary_pred is not None:
+            if binary_pred.dim() == 4 and binary_pred.size(1) == 1:
+                binary_pred_full = binary_pred.detach()
+            elif binary_pred.dim() == 3:
+                binary_pred_full = binary_pred.unsqueeze(1).detach()
+            else:
+                binary_pred_full = binary_pred[:, :1].detach()
+            scene_mask_full = (binary_pred_full > self.text_binary_threshold).float() * (1.0 - subtitle_mask_full)
+            scene_mask_full = scene_mask_full * valid_mask_full
+            scene_weight = F.interpolate(scene_mask_full, size=(feat_h, feat_w), mode='nearest')
+
+        # Inter loss
+        L_inter = subtitle_feature.new_tensor(0.)
+        valid_scene = scene_weight.sum(dim=(2, 3)) > self.eps
+        valid_sub = intra_weight.sum(dim=(2, 3)) > self.eps
+        valid_pairs = (valid_scene & valid_sub)
+        if valid_pairs.any():
+            sub_mean, _ = self._masked_mean(subtitle_feature, intra_weight)
+            scene_mean, _ = self._masked_mean(subtitle_feature, scene_weight)
+            L_inter = self._inter_loss(sub_mean, scene_mean, valid_pairs)
+
+        total_loss = detect_loss
+        if self.lambda_intra > 0:
+            total_loss = total_loss + self.lambda_intra * L_intra
+        if self.lambda_inter > 0:
+            total_loss = total_loss + self.lambda_inter * L_inter
+
+        metrics.update({
+            'subtitle_detect_loss': detect_loss.detach(),
+            'subtitle_intra_loss': L_intra.detach(),
+            'subtitle_inter_loss': L_inter.detach(),
             'subtitle_total_loss': total_loss.detach()
-        }
-        metrics.update({f'color_{k}': v for k, v in color_metrics.items()})
-        
-        if self.binary_loss_type == 'bce+dice':
-            metrics['subtitle_bce_loss'] = bce_loss.detach()
-            metrics['subtitle_dice_loss'] = dice_loss.detach()
-        
-        if negative_loss is not None:
-            metrics['subtitle_negative_loss'] = negative_loss.detach()
-            metrics['scene_text_pixels'] = scene_text_mask.sum().detach() if scene_text_mask is not None else torch.tensor(0.0, device=device)
-            if subtitle_scene_overlap is not None:
-                # scene text 영역 중 subtitle_binary가 0.5 이상으로 예측한 비율
-                metrics['subtitle_scene_overlap'] = subtitle_scene_overlap.detach()
-        
+        })
         return total_loss, metrics
