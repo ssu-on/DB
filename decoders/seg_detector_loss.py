@@ -370,6 +370,22 @@ class SubtitleBranchLoss(nn.Module):
             # Default: use all pixels (mask = 1) with shape (N, H, W)
             mask_small = torch.ones_like(gt_small[:, 0, :, :])
 
+        # ---- Debug / monitoring stats for subtitle branch ----
+        with torch.no_grad():
+            # Positive subtitle pixels in GT at S-map resolution
+            gt_pos = (gt_small > 0.5).float().sum()
+            gt_total = float(gt_small.numel())
+            gt_pos_ratio = gt_pos / (gt_total + self.eps)
+
+            # Valid pixels according to mask
+            mask_pos = mask_small.float().sum()
+            mask_total = float(mask_small.numel())
+            mask_pos_ratio = mask_pos / (mask_total + self.eps)
+
+            s_min = s_map.min()
+            s_max = s_map.max()
+            s_mean = s_map.mean()
+
         # 1) BCE loss on subtitle likelihood map
         bce_loss = self.bce_loss_fn(s_map, gt_small, mask_small)
 
@@ -385,7 +401,13 @@ class SubtitleBranchLoss(nn.Module):
             subtitle_loss=loss.detach(),
             subtitle_bce=bce_loss.detach(),
             subtitle_style=style_loss.detach(),
-            subtitle_s_mean=s_map.mean().detach(),
+            # Raw S-map statistics
+            subtitle_s_mean=s_mean.detach(),
+            subtitle_s_min=s_min.detach(),
+            subtitle_s_max=s_max.detach(),
+            # GT / mask coverage at S resolution
+            subtitle_gt_pos_ratio=gt_pos_ratio.detach(),
+            subtitle_mask_pos_ratio=mask_pos_ratio.detach(),
         )
         # Optional: monitor how many pixels survive in subtitle_binary
         if "subtitle_binary" in pred:
