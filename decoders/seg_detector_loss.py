@@ -385,7 +385,7 @@ class SubtitleBranchLoss(nn.Module):
         L_intra = self._intra_loss(subtitle_feature, intra_weight)
 
         # Scene text mask using main binary prediction
-        scene_weight = subtitle_feature.new_zeros_like(intra_weight)
+        scene_weight = torch.zeros_like(intra_weight, device=device, dtype=dtype)
         if binary_pred is not None:
             if binary_pred.dim() == 4 and binary_pred.size(1) == 1:
                 binary_pred_full = binary_pred.detach()
