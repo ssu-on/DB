@@ -377,14 +377,36 @@ class SubtitleBranchLoss(nn.Module):
             gt_total = float(gt_small.numel())
             gt_pos_ratio = gt_pos / (gt_total + self.eps)
 
-            # Valid pixels according to mask
+            # Valid pixels according to mask (ignore-mask coverage)
             mask_pos = mask_small.float().sum()
             mask_total = float(mask_small.numel())
             mask_pos_ratio = mask_pos / (mask_total + self.eps)
 
+            # S-map raw statistics
             s_min = s_map.min()
             s_max = s_map.max()
             s_mean = s_map.mean()
+
+            # Optional: approximate subtitle/text binary overlap at S resolution,
+            # using the same threshold(≈0.3) as SegDetectorRepresenter.
+            text_bin_ratio = torch.tensor(0.0, device=device)
+            subtitle_bin_ratio = torch.tensor(0.0, device=device)
+            subtitle_text_overlap_ratio = torch.tensor(0.0, device=device)
+            if "binary" in pred:
+                # DBNet text probability map (already sigmoid-ed)
+                text_prob = pred["binary"]
+                text_prob_small = F.interpolate(
+                    text_prob, size=target_size_s, mode="bilinear", align_corners=False
+                )
+                text_binary_small = (text_prob_small > 0.3).float()
+                subtitle_binary_small = (s_map > 0.3).float()
+
+                text_bin_ratio = text_binary_small.mean()
+                subtitle_bin_ratio = subtitle_binary_small.mean()
+
+                inter = (text_binary_small * subtitle_binary_small).sum()
+                denom = text_binary_small.sum() + self.eps
+                subtitle_text_overlap_ratio = inter / denom
 
         # 1) BCE loss on subtitle likelihood map
         bce_loss = self.bce_loss_fn(s_map, gt_small, mask_small)
@@ -408,6 +430,10 @@ class SubtitleBranchLoss(nn.Module):
             # GT / mask coverage at S resolution
             subtitle_gt_pos_ratio=gt_pos_ratio.detach(),
             subtitle_mask_pos_ratio=mask_pos_ratio.detach(),
+            # Binary coverage / overlap (approximate subtitle_mask behaviour)
+            subtitle_text_bin_ratio=text_bin_ratio.detach(),
+            subtitle_bin_ratio=subtitle_bin_ratio.detach(),
+            subtitle_text_overlap_ratio=subtitle_text_overlap_ratio.detach(),
         )
         # Optional: monitor how many pixels survive in subtitle_binary
         if "subtitle_binary" in pred:
