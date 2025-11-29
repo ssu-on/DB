@@ -56,33 +56,19 @@ define:
                     adaptive: True
                     in_channels: [64, 128, 256, 512]
                     k: 50
-                    # Subtitle branch 설정
                     enable_subtitle_branch: True
-                    use_color_embedding_in_binary: True  # Binary head에 color embedding concat
-                    use_deep_subtitle_fuse: True  # Deep fuse branch 사용 (6-layer + residual + dilation)
                     subtitle_inner_channels: 256
-                    enable_color_embedding: True
-                    color_embed_dim: 16
-                    color_normalize: True
                 # Freeze 설정: Stage 2 학습 시 backbone/fuse freeze, subtitle branch만 학습
                 freeze_for_subtitle_branch: True
                 loss_class: SubtitleBranchLoss
                 loss_kwargs:
-                    binary_loss_type: 'bce+dice'  # 'bce', 'dice', or 'bce+dice'
-                    lambda_color: 0.3  # color embedding loss weight
-                    negative_bce_alpha: 0.5
+                    bce_weight: 1.0
+                    dice_weight: 1.0
+                    lambda_intra: 1.0
+                    lambda_inter: 1.0
+                    margin: 0.5
+                    text_binary_threshold: 0.3
                     eps: 1e-6
-                    bce_kwargs:
-                        negative_ratio: 3.0
-                    color_kwargs:
-                        # lambda_inter: 0.4  # 제거됨
-                        lambda_instance_consistency: 0.1  # 선택 (0.0으로 비활성화 가능)
-                        # lambda_subtitle_vs_background: 0.2  # 제거됨
-                        lambda_subtitle_vs_scene_text: 0.5  # 필수
-                        margin: 0.5
-                        binary_threshold: 0.5
-                        text_binary_threshold: 0.5
-                        min_pixels: 20
         representer:
             class: SegDetectorRepresenter
             # subtitle 전용 평가를 위해 subtitle_binary 맵을 사용
