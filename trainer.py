@@ -38,6 +38,10 @@ class Trainer:
         lr = self.experiment.train.scheduler.learning_rate.get_learning_rate(
             epoch, step)
 
+        # @@
+        # warmup_steps = getattr(self.experiment.train.scheduler.learning_rate, 'warmup_steps', 0)
+        # if warmup_steps and step < warmup_steps:
+        #     lr = lr * (step / float(warmup_steps))  # linear warmup
         for group in optimizer.param_groups:
             group['lr'] = lr
         self.current_lr = lr
@@ -46,7 +50,7 @@ class Trainer:
         self.logger.report_time('Start')
         self.logger.args(self.experiment)
         model = self.init_model()
-        train_data_loader = self.experiment.train.data_loader
+        train_data_loader = self.experiment.train.data_loader                      # YAML 설정에 따라 구성된 DataLoader 객체 가져옴 
         if self.experiment.validation:
             validation_loaders = self.experiment.validation.data_loaders
 
@@ -58,23 +62,18 @@ class Trainer:
             self.steps = epoch * self.total + iter_delta
 
         # Init start epoch and iter
-        # If the model provides a custom trainable-parameter selector
-        # (e.g. Stage 2 subtitle-only training), use it.
-        if hasattr(model, 'get_trainable_parameters'):
-            parameters = model.get_trainable_parameters()
-        else:
-            parameters = model.parameters()
-        optimizer = self.experiment.train.scheduler.create_optimizer(parameters)
+        optimizer = self.experiment.train.scheduler.create_optimizer(
+            model.parameters())
 
         self.logger.report_time('Init')
 
-        model.train()
+        model.train()                                                               # 모델을 학습 모드로 설정 (dropout, batch normalization 등 활성화)
         while True:
             self.logger.info('Training epoch ' + str(epoch))
             self.logger.epoch(epoch)
             self.total = len(train_data_loader)
 
-            for batch in train_data_loader:
+            for batch in train_data_loader:                                         # DataLoader에서 배치 단위로 데이터 로드
                 self.update_learning_rate(optimizer, epoch, self.steps)
 
                 self.logger.report_time("Data loading")
@@ -175,17 +174,23 @@ class Trainer:
         for i, batch in tqdm(enumerate(data_loader), total=len(data_loader)):
             pred = model.forward(batch, training=False)
             output = self.structure.representer.represent(batch, pred)
-            # measurer에 따라 validate_measure 반환 형식이 다를 수 있음
-            validate_result = self.structure.measurer.validate_measure(batch, output)
-            if isinstance(validate_result, tuple) and len(validate_result) == 2:
-                raw_metric, interested = validate_result
+
+            # measurer.validate_measure 인터페이스는 구현체마다 다를 수 있음
+            # - QuadMeasurer: raw_metric만 반환
+            # - 다른 measurer: (raw_metric, interested) 튜플 반환 가능
+            result = self.structure.measurer.validate_measure(batch, output)
+            if isinstance(result, tuple) and len(result) == 2:
+                raw_metric, interested = result
             else:
-                raw_metric, interested = validate_result, None
+                raw_metric = result
+                interested = None
             raw_metrics.append(raw_metric)
 
             if visualize and self.structure.visualizer:
+                # interested가 없으면 pred를 넘겨서 기본 시각화 사용
+                target_for_vis = interested if interested is not None else pred
                 vis_image = self.structure.visualizer.visualize(
-                    batch, output, interested)
+                    batch, output, target_for_vis)
                 vis_images.update(vis_image)
         metrics = self.structure.measurer.gather_measure(
             raw_metrics, self.logger)
