@@ -364,6 +364,13 @@ class SubtitleBranchLoss(nn.Module):
         mask = mask.float()
 
         subtitle_mask_full = (gt > 0.5).float()
+        if torch.any((subtitle_mask_full < 0) | (subtitle_mask_full > 1) | torch.isnan(subtitle_mask_full)):
+            filenames = batch.get('filename', 'unknown')
+            print("[SubtitleBranchLoss] invalid subtitle_mask_full detected:",
+                  float(subtitle_mask_full.min()),
+                  float(subtitle_mask_full.max()),
+                  filenames)
+            subtitle_mask_full = subtitle_mask_full.clamp(0.0, 1.0)
         valid_mask_full = mask
 
         # Detection loss

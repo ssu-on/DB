@@ -110,6 +110,7 @@ define:
                 weight_decay: 0.0001
             learning_rate:  
                 class: DecayLearningRate
+                lr: 0.0015
                 epochs: 200  # Subtitle branch 학습은 더 적은 epoch
                 warmup_steps: 500
         epochs: 200
