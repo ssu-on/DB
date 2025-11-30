@@ -167,10 +167,15 @@ class SegDetector(nn.Module):
             self.subtitle_feature_extractor = SubtitleFeatureExtractor(
                 inner_channels + coord_channels, subtitle_inner_channels, bias=bias
             )
+            self.subtitle_residual_proj = nn.Sequential(
+                nn.Conv2d(inner_channels, subtitle_inner_channels, kernel_size=1, bias=bias),
+                BatchNorm2d(subtitle_inner_channels)
+            )
             self.subtitle_style_gate = SubtitleStyleGate(subtitle_inner_channels, bias=bias)
             self.subtitle_binary_head = SubtitleBinaryHead(subtitle_inner_channels, bias=bias)
 
             self.subtitle_feature_extractor.apply(self.weights_init)
+            self.subtitle_residual_proj.apply(self.weights_init)
             self.subtitle_style_gate.apply(self.weights_init)
             self.subtitle_binary_head.apply(self.weights_init)
         # ***************************************************
@@ -259,8 +264,11 @@ class SegDetector(nn.Module):
 
             fuse_with_coord = torch.cat([fuse, y_map], dim=1)
             subtitle_feature = self.subtitle_feature_extractor(fuse_with_coord)          # fuse → subtitle 전용 feature (1/4 resolution)
+            residual_feature = self.subtitle_residual_proj(fuse)
+            subtitle_feature = subtitle_feature + residual_feature
             style_gate = self.subtitle_style_gate(subtitle_feature)  # (N, 1, H/4, W/4)
-            gated_subtitle_feature = subtitle_feature * style_gate
+            soft_gate = style_gate.pow(2) + 0.3  # soft attenuation to preserve baseline stroke detail
+            gated_subtitle_feature = subtitle_feature * soft_gate
             subtitle_binary = self.subtitle_binary_head(gated_subtitle_feature)  # subtitle binary map (4x upsampled to full resolution)
         # **************************************************************
         
