@@ -97,17 +97,28 @@ class SegDetectorModel(nn.Module):
         for param in decoder.parameters():
             param.requires_grad = False
         
-        # Unfreeze subtitle branch components
+        # Unfreeze subtitle branch components (supports both legacy and new modules)
+        subtitle_modules = [
+            'subtitle_feature_extractor',
+            'subtitle_residual_proj',
+            'subtitle_style_gate',
+            'subtitle_binary_head',
+            # Backward compatibility for older subtitle branch structure
+            'subtitle_fuse_branch',
+            'subtitle_color_embed_head',
+        ]
         if hasattr(decoder, 'enable_subtitle_branch') and decoder.enable_subtitle_branch:
-            if hasattr(decoder, 'subtitle_fuse_branch'):
-                for param in decoder.subtitle_fuse_branch.parameters():
-                    param.requires_grad = True
-            if hasattr(decoder, 'subtitle_binary_head'):
-                for param in decoder.subtitle_binary_head.parameters():
-                    param.requires_grad = True
-            if hasattr(decoder, 'subtitle_color_embed_head'):
-                for param in decoder.subtitle_color_embed_head.parameters():
-                    param.requires_grad = True
+            unfrozen = False
+            for name in subtitle_modules:
+                if hasattr(decoder, name):
+                    for param in getattr(decoder, name).parameters():
+                        param.requires_grad = True
+                    unfrozen = True
+            if not unfrozen:
+                raise RuntimeError(
+                    "Subtitle branch enabled but no subtitle modules were unfrozen. "
+                    "Expected modules like subtitle_feature_extractor or subtitle_binary_head."
+                )
         else:
             raise RuntimeError(
                 "freeze_for_subtitle_branch is enabled but decoder.enable_subtitle_branch is False. "
@@ -126,11 +137,17 @@ class SegDetectorModel(nn.Module):
             
             decoder = model.decoder
             # Keep main decoder components in eval mode
+            subtitle_modules = set([
+                'subtitle_feature_extractor',
+                'subtitle_residual_proj',
+                'subtitle_style_gate',
+                'subtitle_binary_head',
+                'subtitle_fuse_branch',
+                'subtitle_color_embed_head',
+            ])
             for name, module in decoder.named_children():
-                if name in ['subtitle_fuse_branch', 'subtitle_binary_head', 'subtitle_color_embed_head']:
-                    # Subtitle branch components: train mode
+                if name in subtitle_modules:
                     module.train(mode)
                 else:
-                    # All other components: eval mode (frozen)
                     module.eval()
         return self
