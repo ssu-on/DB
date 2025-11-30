@@ -266,7 +266,7 @@ class SegDetector(nn.Module):
 
             fuse_with_coord = torch.cat([fuse, y_map], dim=1)
             subtitle_feature = self.subtitle_feature_extractor(fuse_with_coord)          # fuse → subtitle 전용 feature (1/4 resolution)
-            residual_feature = self.subtitle_residual_proj(fuse)
+            residual_feature = self.subtitle_residual_proj(fuse).detach()
             subtitle_feature = subtitle_feature + self.subtitle_residual_alpha * residual_feature
             style_gate = self.subtitle_style_gate(subtitle_feature)  # (N, 1, H/4, W/4)
             gated_subtitle_feature = subtitle_feature * style_gate
