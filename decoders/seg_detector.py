@@ -266,11 +266,9 @@ class SegDetector(nn.Module):
 
             fuse_with_coord = torch.cat([fuse, y_map], dim=1)
             subtitle_feature = self.subtitle_feature_extractor(fuse_with_coord)          # fuse → subtitle 전용 feature (1/4 resolution)
-            residual_feature = self.subtitle_residual_proj(fuse).detach()
-            residual_feature = residual_feature.clamp(-2, 2)
-            subtitle_feature = subtitle_feature + self.subtitle_residual_alpha * residual_feature
             style_gate = self.subtitle_style_gate(subtitle_feature)  # (N, 1, H/4, W/4)
-            gated_subtitle_feature = subtitle_feature * style_gate
+            soft_gate = style_gate.pow(2) + 0.3  # soft attenuation to preserve baseline stroke detail
+            gated_subtitle_feature = subtitle_feature * soft_gate
             subtitle_binary = self.subtitle_binary_head(gated_subtitle_feature)  # subtitle binary map (4x upsampled to full resolution)
         # **************************************************************
         
