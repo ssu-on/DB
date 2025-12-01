@@ -58,7 +58,7 @@ define:
                     k: 50
                     enable_subtitle_branch: True
                     subtitle_inner_channels: 256
-                    subtitle_residual_alpha: 0.4
+                    subtitle_residual_alpha: 0.1
                 # Freeze 설정: Stage 2 학습 시 backbone/fuse freeze, subtitle branch만 학습
                 freeze_for_subtitle_branch: True
                 loss_class: SubtitleBranchLoss
