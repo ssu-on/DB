@@ -108,7 +108,6 @@ class SegDetector(nn.Module):
         # Subtitle branch related ***************************
         self.enable_subtitle_branch = kwargs.get('enable_subtitle_branch', False)
         subtitle_inner_channels = kwargs.get('subtitle_inner_channels', inner_channels)
-        self.subtitle_residual_alpha = float(kwargs.get('subtitle_residual_alpha', 0.4))
         # ***************************************************
 
         self.up5 = nn.Upsample(scale_factor=2, mode='nearest')
@@ -163,21 +162,15 @@ class SegDetector(nn.Module):
         self.out2.apply(self.weights_init)
 
         # Subtitle branch ***********************************
-        residual_feature = None
         if self.enable_subtitle_branch:
             coord_channels = 1
             self.subtitle_feature_extractor = SubtitleFeatureExtractor(
                 inner_channels + coord_channels, subtitle_inner_channels, bias=bias
             )
-            self.subtitle_residual_proj = nn.Sequential(
-                nn.Conv2d(inner_channels, subtitle_inner_channels, kernel_size=1, bias=bias),
-                BatchNorm2d(subtitle_inner_channels)
-            )
             self.subtitle_style_gate = SubtitleStyleGate(subtitle_inner_channels, bias=bias)
             self.subtitle_binary_head = SubtitleBinaryHead(subtitle_inner_channels, bias=bias)
 
             self.subtitle_feature_extractor.apply(self.weights_init)
-            self.subtitle_residual_proj.apply(self.weights_init)
             self.subtitle_style_gate.apply(self.weights_init)
             self.subtitle_binary_head.apply(self.weights_init)
         # ***************************************************
@@ -261,7 +254,7 @@ class SegDetector(nn.Module):
             dtype = fuse.dtype
 
             # y: [0, 1] (top → bottom)
-            y_range = torch.linspace(0.0, 1.0, H, device=device, dtype=dtype)
+            y_range = torch.linspace(0.0, 2.0, H, device=device, dtype=dtype)
             y_map = y_range.view(1, 1, H, 1).expand(N, 1, H, W)
 
             fuse_with_coord = torch.cat([fuse, y_map], dim=1)

@@ -323,28 +323,24 @@ class SubtitleBranchLoss(nn.Module):
         loss = (diff * weight).sum() / (weight.sum() * feat.size(1) + self.eps)
         return loss
 
-    def _inter_loss(self, subtitle_feat, subtitle_center, scene_weight, valid_mask):
+    def _inter_loss(self, sub_feat, scene_feat, valid_mask):
         """
-        Compute distance between each scene-text feature (in subtitle space) and the
-        subtitle center, encouraging scene pixels to stay beyond the margin.
+        sub_feat / scene_feat: (N,C)
+        valid_mask: bool mask indicating entries to consider
         """
         if valid_mask.sum() == 0:
-            return subtitle_feat.new_zeros(())
-        center = subtitle_center[:, :, None, None]  # (N, C, 1, 1)
-        diff_sq = (subtitle_feat - center) ** 2
-        diff_sq = diff_sq.sum(dim=1)  # (N, H, W)
-        weight = scene_weight.squeeze(1)
-        weight_sum = weight.view(weight.size(0), -1).sum(dim=1).clamp_min(self.eps)
-        dist = torch.sqrt(torch.clamp((diff_sq * weight).view(weight.size(0), -1).sum(dim=1) / weight_sum, min=0.0))
-        valid_dist = dist[valid_mask]
-        if valid_dist.numel() == 0:
-            return dist.new_zeros(())
-        loss = F.relu(self.margin - valid_dist).mean()
+            return sub_feat.new_tensor(0.)
+        dist = torch.norm(sub_feat - scene_feat, dim=1)
+        dist = dist[valid_mask]
+        if dist.numel() == 0:
+            return sub_feat.new_tensor(0.)
+        loss = F.relu(self.margin - dist).mean()
         return loss
 
     def forward(self, pred, batch):
         assert 'subtitle_binary' in pred, "subtitle_binary must be in pred"
         assert 'subtitle_feature' in pred, "subtitle_feature must be in pred"
+
         subtitle_binary = pred['subtitle_binary']
         subtitle_feature = pred['subtitle_feature']
         binary_pred = pred.get('binary', None)
@@ -417,7 +413,8 @@ class SubtitleBranchLoss(nn.Module):
         valid_pairs = (valid_scene & valid_sub)
         if valid_pairs.any():
             sub_mean, _ = self._masked_mean(subtitle_feature, intra_weight)
-            L_inter = self._inter_loss(subtitle_feature, sub_mean, scene_weight, valid_pairs)
+            scene_mean, _ = self._masked_mean(subtitle_feature, scene_weight)
+            L_inter = self._inter_loss(sub_mean, scene_mean, valid_pairs)
 
         total_loss = detect_loss
         if self.lambda_intra > 0:

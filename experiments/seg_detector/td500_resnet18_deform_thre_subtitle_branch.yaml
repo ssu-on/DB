@@ -58,7 +58,7 @@ define:
                     k: 50
                     enable_subtitle_branch: True
                     subtitle_inner_channels: 256
-                    subtitle_residual_alpha: 0.1
+                    subtitle_residual_alpha: 0.4
                 # Freeze 설정: Stage 2 학습 시 backbone/fuse freeze, subtitle branch만 학습
                 freeze_for_subtitle_branch: True
                 loss_class: SubtitleBranchLoss
@@ -66,7 +66,7 @@ define:
                     bce_weight: 1.0
                     dice_weight: 1.0
                     lambda_intra: 1.0
-                    lambda_inter: 0.1
+                    lambda_inter: 1.0
                     margin: 0.5
                     text_binary_threshold: 0.3
                     eps: 1e-6
@@ -105,14 +105,14 @@ define:
             class: OptimizerScheduler
             optimizer: "SGD"
             optimizer_args:
-                lr: 0.0015  # Subtitle branch residual 학습을 위한 LR 상향
+                lr: 0.0003  # Subtitle branch만 학습하므로 더 낮은 learning rate 사용
                 momentum: 0.9
                 weight_decay: 0.0001
             learning_rate:  
                 class: DecayLearningRate
                 lr: 0.0015
                 epochs: 200  # Subtitle branch 학습은 더 적은 epoch
-                warmup_steps: 500
+                warmup_steps: 1500
         epochs: 200
 
     validation: &validate
