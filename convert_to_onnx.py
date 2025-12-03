@@ -27,6 +27,9 @@ class Demo:
     def __init__(self, experiment, args, cmd=dict()):
         self.RGB_MEAN = np.array([122.67891434, 116.66876762, 104.00698793])
         self.experiment = experiment
+        # evaluation 설정에서 'visualize' 키를 요구하므로 기본값 보장
+        args = dict(args)
+        args.setdefault('visualize', False)
         experiment.load('evaluation', **args)
         self.args = cmd
         self.structure = experiment.structure
