@@ -1,7 +1,6 @@
-#!python3
+# #!python3
 import argparse
 import time
-#import logging
 
 import torch
 import yaml
@@ -61,12 +60,6 @@ def main():
     experiment_args = conf.compile(conf.load(args['exp']))['Experiment']
     experiment_args.update(cmd=args)
     experiment = Configurable.construct_class_from_config(experiment_args)
-    
-    # # 디버깅 코드 추가: 로드된 데이터셋 정보 출력
-    # logging.info("Experiment configuration loaded:")
-    # logging.info(f"Train data: {experiment_args.get('train_data', 'Not defined')}")
-    # logging.info(f"Validate data: {experiment_args.get('validate_data', 'Not defined')}")
-    # experiment = Configurable.construct_class_from_config(experiment_args)
 
     if not args['print_config_only']:
         torch.backends.cudnn.benchmark = args['benchmark']
@@ -75,4 +68,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
