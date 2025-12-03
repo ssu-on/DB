@@ -59,7 +59,7 @@ define:
             td500: 
                 class: DataLoader
                 dataset: ^validate_data
-                batch_size: 8
+                batch_size: 1
                 num_workers: 4
                 collect_fn:
                     class: ICDARCollectFN
