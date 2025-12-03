@@ -39,13 +39,11 @@ class Demo:
         self.output_path = self.args['output']
 
     def init_torch_tensor(self):
-        # Use gpu or not
+        """Select inference device without changing global default tensor type."""
         if torch.cuda.is_available():
             self.device = torch.device('cuda')
-            torch.set_default_tensor_type('torch.cuda.FloatTensor')
         else:
             self.device = torch.device('cpu')
-            torch.set_default_tensor_type('torch.FloatTensor')
 
     def init_model(self):
         model = self.structure.builder.build(self.device)
