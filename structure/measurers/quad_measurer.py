@@ -54,7 +54,8 @@ class QuadMeasurer(Configurable):
         return results
 
     def validate_measure(self, batch, output, is_output_polygon=False, box_thresh=0.6):
-        return self.measure(batch, output, is_output_polygon, box_thresh)
+        results = self.measure(batch, output, is_output_polygon, box_thresh)
+        return results, None
 
     def evaluate_measure(self, batch, output):
         return self.measure(batch, output),\
