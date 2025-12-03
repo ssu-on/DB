@@ -27,11 +27,6 @@ class Demo:
     def __init__(self, experiment, args, cmd=dict()):
         self.RGB_MEAN = np.array([122.67891434, 116.66876762, 104.00698793])
         self.experiment = experiment
-        # evaluation 설정에서 'visualize' 키를 요구하므로 기본값 보장
-        args = dict(args)
-        cmd_args = dict(args.get('cmd', {}))
-        cmd_args.setdefault('visualize', False)
-        args['cmd'] = cmd_args
         experiment.load('evaluation', **args)
         self.args = cmd
         self.structure = experiment.structure
@@ -39,11 +34,13 @@ class Demo:
         self.output_path = self.args['output']
 
     def init_torch_tensor(self):
-        """Select inference device without changing global default tensor type."""
+        # Use gpu or not
         if torch.cuda.is_available():
             self.device = torch.device('cuda')
+            torch.set_default_tensor_type('torch.cuda.FloatTensor')
         else:
             self.device = torch.device('cpu')
+            torch.set_default_tensor_type('torch.FloatTensor')
 
     def init_model(self):
         model = self.structure.builder.build(self.device)
