@@ -29,7 +29,9 @@ class Demo:
         self.experiment = experiment
         # evaluation 설정에서 'visualize' 키를 요구하므로 기본값 보장
         args = dict(args)
-        args.setdefault('visualize', False)
+        cmd_args = dict(args.get('cmd', {}))
+        cmd_args.setdefault('visualize', False)
+        args['cmd'] = cmd_args
         experiment.load('evaluation', **args)
         self.args = cmd
         self.structure = experiment.structure
