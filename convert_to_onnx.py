@@ -14,10 +14,15 @@ def main():
     args = parser.parse_args()
     args = vars(args)
     args = {k: v for k, v in args.items() if v is not None}
+    # convert 스크립트는 시각화 옵션을 받지 않으므로 기본값을 False로 고정
+    if 'visualize' not in args:
+        args['visualize'] = False
 
     conf = Config()
     experiment_args = conf.compile(conf.load(args['exp']))['Experiment']
     experiment_args.update(cmd=args)
+    experiment_args.setdefault('cmd', {})
+    experiment_args['cmd'].setdefault('visualize', False)
     experiment = Configurable.construct_class_from_config(experiment_args)
 
     Demo(experiment, experiment_args, cmd=args).inference()
