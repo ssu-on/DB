@@ -64,7 +64,7 @@ define:
                 collect_fn:
                     class: ICDARCollectFN
         visualize: false
-        interval: 156
+        interval: 2000
         exempt: 1
 
     logger:
