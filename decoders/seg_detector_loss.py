@@ -2,6 +2,7 @@ import sys
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class SegDetectorLossBuilder():
@@ -262,3 +263,62 @@ class L1LeakyDiceLoss(nn.Module):
         metrics.update(**l1_metric, thresh_loss=thresh_loss)
         loss = main_loss + thresh_loss + l1_loss * self.l1_scale
         return loss, metrics
+
+
+class SubtitleBoundaryAwareL1BalanceCELoss(nn.Module):
+    '''
+    L1BalanceCELoss + subtitle boundary intra regularization.
+    Keeps shrink gt for binary while aligning boundary features to core features.
+    '''
+
+    def __init__(self, eps=1e-6, l1_scale=10, bce_scale=5,
+                 boundary_scale=0.2, feature_key='fuse_feature'):
+        super(SubtitleBoundaryAwareL1BalanceCELoss, self).__init__()
+        self.base_loss = L1BalanceCELoss(eps=eps, l1_scale=l1_scale, bce_scale=bce_scale)
+        self.boundary_scale = boundary_scale
+        self.feature_key = feature_key
+        self.eps = eps
+
+    def forward(self, pred, batch):
+        base_loss, metrics = self.base_loss(pred, batch)
+        boundary_loss = self.subtitle_boundary_intra(pred, batch)
+        loss = base_loss + self.boundary_scale * boundary_loss
+        metrics = dict(metrics)
+        metrics['subtitle_intra_loss'] = boundary_loss
+        return loss, metrics
+
+    def subtitle_boundary_intra(self, pred, batch):
+        feature_map = pred.get(self.feature_key, None)
+        boundary = batch.get('boundary', None)
+        core = batch.get('gt', None)
+        reference = pred['binary']
+        if feature_map is None or boundary is None or core is None:
+            return reference.sum() * 0.
+
+        boundary = boundary.float()
+        core = core.float()
+        if boundary.dim() == 3:
+            boundary = boundary.unsqueeze(1)
+        if core.dim() == 3:
+            core = core.unsqueeze(1)
+
+        spatial_size = feature_map.shape[2:]
+        if boundary.shape[2:] != spatial_size:
+            boundary = F.interpolate(boundary, size=spatial_size, mode='nearest')
+        if core.shape[2:] != spatial_size:
+            core = F.interpolate(core, size=spatial_size, mode='nearest')
+
+        core_area = core.sum(dim=(2, 3), keepdim=True)
+        boundary_area = boundary.sum(dim=(2, 3), keepdim=True)
+        valid_mask = ((core_area > 0) & (boundary_area > 0)).view(-1)
+        if not torch.any(valid_mask):
+            return reference.sum() * 0.
+
+        core_area = core_area.clamp_min(self.eps)
+        boundary_area = boundary_area.clamp_min(self.eps)
+
+        core_mean = (feature_map * core).sum(dim=(2, 3), keepdim=True) / core_area
+        diff = (feature_map - core_mean).pow(2)
+        boundary_loss = (diff * boundary).sum(dim=(2, 3), keepdim=True) / boundary_area
+        boundary_loss = boundary_loss.squeeze(-1).squeeze(-1).mean(dim=1)
+        return boundary_loss[valid_mask].mean()

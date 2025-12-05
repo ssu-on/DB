@@ -36,6 +36,7 @@ class MakeSegDetectionData(DataProcess):
             polygons, ignore_tags = self.validate_polygons(
                 polygons, ignore_tags, h, w)
         gt = np.zeros((1, h, w), dtype=np.float32)
+        full_gt = np.zeros((1, h, w), dtype=np.float32)
         mask = np.ones((h, w), dtype=np.float32)
         for i in range(len(polygons)):
             polygon = polygons[i]
@@ -64,13 +65,16 @@ class MakeSegDetectionData(DataProcess):
                     ignore_tags[i] = True
                     continue
                 shrinked = np.array(shrinked[0]).reshape(-1, 2)
+                cv2.fillPoly(full_gt[0], [polygon.astype(np.int32)], 1)
                 cv2.fillPoly(gt[0], [shrinked.astype(np.int32)], 1)
 
         if filename is None:
             filename = ''
+        boundary = np.clip(full_gt - gt, 0, 1)
         data.update(image=image,
                     polygons=polygons,
-                    gt=gt, mask=mask, filename=filename)
+                    gt=gt, mask=mask, filename=filename,
+                    gt_full=full_gt, boundary=boundary)
         return data
 
     def validate_polygons(self, polygons, ignore_tags, h, w):

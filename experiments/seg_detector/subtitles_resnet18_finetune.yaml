@@ -16,8 +16,11 @@ define:
                     adaptive: True
                     in_channels: [64, 128, 256, 512]
                     k: 50
-                # Baseline comparison: original DBNet-style subtitle finetune
-                loss_class: L1BalanceCELoss
+                # Subtitle-aware training with boundary intra regularization
+                loss_class: SubtitleBoundaryAwareL1BalanceCELoss
+                loss_kwargs:
+                    boundary_scale: 0.2
+                    feature_key: fuse_feature
 
         representer:
             class: SegDetectorRepresenter

@@ -135,7 +135,7 @@ class SegDetector(nn.Module):
         # We do not correct the name due to the trained model.
         binary = self.binarize(fuse)
         if self.training:
-            result = OrderedDict(binary=binary)
+            result = OrderedDict(binary=binary, fuse_feature=fuse)
         else:
             return binary
         if self.adaptive and self.training:
