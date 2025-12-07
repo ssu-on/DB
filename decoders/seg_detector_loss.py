@@ -267,74 +267,53 @@ class L1LeakyDiceLoss(nn.Module):
 
 class SubtitleBoundaryAwareL1BalanceCELoss(nn.Module):
     '''
-    L1BalanceCELoss + subtitle boundary intra regularization.
-    Keeps shrink gt for binary while aligning boundary features to core features.
+    L1BalanceCELoss + Soft Boundary BCE supervision on binary map.
+    full_gt - shrink_gt 로 정의된 boundary 영역을 "약하게" positive 로 유도해
+    subtitle domain 특유의 글자 잘림(under-segmentation)을 완화한다.
     '''
 
     def __init__(self, eps=1e-6, l1_scale=10, bce_scale=5,
-                 boundary_scale=0.2, feature_key='fuse_feature'):
-        super(SubtitleBoundaryAwareL1BalanceCELoss, self).__init__()
+                 boundary_scale=0.2):
+        super().__init__()
         self.base_loss = L1BalanceCELoss(eps=eps, l1_scale=l1_scale, bce_scale=bce_scale)
         self.boundary_scale = boundary_scale
-        self.feature_key = feature_key
         self.eps = eps
 
     def forward(self, pred, batch):
         base_loss, metrics = self.base_loss(pred, batch)
-        boundary_loss = self.subtitle_boundary_intra(pred, batch)
-        loss = base_loss + self.boundary_scale * boundary_loss
-        metrics = dict(metrics)
-        metrics['subtitle_intra_loss'] = boundary_loss
-        return loss, metrics
-
-    def subtitle_boundary_intra(self, pred, batch):
-        feature_map = pred.get(self.feature_key, None)
         boundary = batch.get('boundary', None)
-        core = batch.get('gt', None)
-        reference = pred['binary']
-        if feature_map is None or boundary is None or core is None:
-            return reference.sum() * 0.
+        binary_pred = pred.get('binary', None)
 
-        # 기본 타입 정리
-        boundary = boundary.float()
-        core = core.float()
+        if boundary is None or binary_pred is None or self.boundary_scale <= 0:
+            return base_loss, metrics
 
-        # boundary / core shape: (N, 1, H, W) 로 맞추기
-        if boundary.dim() == 3:
-            boundary = boundary.unsqueeze(1)
-        if core.dim() == 3:
-            core = core.unsqueeze(1)
+        # dtype / device 정리
+        binary_pred = binary_pred.float()
+        boundary = boundary.to(device=binary_pred.device, dtype=binary_pred.dtype)
 
-        # feature_map 과 spatial size 맞추기 (GT를 먼저 feature 해상도로 올린 뒤 연산)
-        spatial_size = feature_map.shape[2:]
+        # shape 정리: (N, 1, H, W)
+        binary_pred = binary_pred.unsqueeze(1) if binary_pred.dim() == 3 else binary_pred
+        boundary = boundary.unsqueeze(1) if boundary.dim() == 3 else boundary
+
+        spatial_size = binary_pred.shape[2:]
         if boundary.shape[2:] != spatial_size:
-            boundary = F.interpolate(boundary, size=spatial_size, mode='nearest')
-        if core.shape[2:] != spatial_size:
-            core = F.interpolate(core, size=spatial_size, mode='nearest')
+            boundary = F.interpolate(boundary.float(), size=spatial_size, mode='nearest')
 
-        # ------------- (NEW 1) boundary ring 확장 (3×3 dilation, feature 해상도에서) -------------
-        # 원래 thin ring 을 약간 두껍게 만들어 더 안정적인 boundary supervision
-        boundary = F.max_pool2d(boundary, kernel_size=3, stride=1, padding=1)
-        boundary = (boundary > 0).float()
+        # boundary mask (= Lboundary가 적용될 위치)
+        boundary_mask = (boundary > 0.5).float()
+        area = boundary_mask.sum()
+        if area <= self.eps:
+            return base_loss, metrics
 
-        # core / boundary 유효 영역 계산
-        core_area = core.sum(dim=(2, 3), keepdim=True)
-        boundary_area = boundary.sum(dim=(2, 3), keepdim=True)
-        valid_mask = ((core_area > 0) & (boundary_area > 0)).view(-1)
-        if not torch.any(valid_mask):
-            return reference.sum() * 0.
+        # 🔥 핵심: 경계를 1로 강제하지 않고 soft positive로 유도
+        target = 0.3 * boundary_mask   # boundary 내부는 0.3 정도의 약한 1
 
-        core_area = core_area.clamp_min(self.eps)
-        boundary_area = boundary_area.clamp_min(self.eps)
+        # BCE 계산
+        bce_map = F.binary_cross_entropy(binary_pred, target, reduction='none')
+        boundary_loss = (bce_map * boundary_mask).sum() / (area + self.eps)
 
-        # core 평균 feature 계산
-        core_mean = (feature_map * core).sum(dim=(2, 3), keepdim=True) / core_area
+        loss = base_loss + self.boundary_scale * boundary_loss
 
-        # feature 차이 제곱
-        diff = (feature_map - core_mean).pow(2)
-
-        # ------------- (NEW 3) boundary alignment (uniform weight inside boundary) -------------
-        # boundary 영역 전체를 core 와 비슷한 feature 로 만드는 방향으로 penalty 부여
-        boundary_loss = (diff * boundary).sum(dim=(2, 3), keepdim=True) / boundary_area
-        boundary_loss = boundary_loss.squeeze(-1).squeeze(-1).mean(dim=1)
-        return boundary_loss[valid_mask].mean()
+        metrics = dict(metrics)
+        metrics['boundary_soft_bce'] = boundary_loss
+        return loss, metrics
