@@ -295,19 +295,29 @@ class SubtitleBoundaryAwareL1BalanceCELoss(nn.Module):
         if feature_map is None or boundary is None or core is None:
             return reference.sum() * 0.
 
+        # 기본 타입 정리
         boundary = boundary.float()
         core = core.float()
+
+        # boundary / core shape: (N, 1, H, W) 로 맞추기
         if boundary.dim() == 3:
             boundary = boundary.unsqueeze(1)
         if core.dim() == 3:
             core = core.unsqueeze(1)
 
+        # feature_map 과 spatial size 맞추기 (GT를 먼저 feature 해상도로 올린 뒤 연산)
         spatial_size = feature_map.shape[2:]
         if boundary.shape[2:] != spatial_size:
             boundary = F.interpolate(boundary, size=spatial_size, mode='nearest')
         if core.shape[2:] != spatial_size:
             core = F.interpolate(core, size=spatial_size, mode='nearest')
 
+        # ------------- (NEW 1) boundary ring 확장 (3×3 dilation, feature 해상도에서) -------------
+        # 원래 thin ring 을 약간 두껍게 만들어 더 안정적인 boundary supervision
+        boundary = F.max_pool2d(boundary, kernel_size=3, stride=1, padding=1)
+        boundary = (boundary > 0).float()
+
+        # core / boundary 유효 영역 계산
         core_area = core.sum(dim=(2, 3), keepdim=True)
         boundary_area = boundary.sum(dim=(2, 3), keepdim=True)
         valid_mask = ((core_area > 0) & (boundary_area > 0)).view(-1)
@@ -317,8 +327,14 @@ class SubtitleBoundaryAwareL1BalanceCELoss(nn.Module):
         core_area = core_area.clamp_min(self.eps)
         boundary_area = boundary_area.clamp_min(self.eps)
 
+        # core 평균 feature 계산
         core_mean = (feature_map * core).sum(dim=(2, 3), keepdim=True) / core_area
+
+        # feature 차이 제곱
         diff = (feature_map - core_mean).pow(2)
+
+        # ------------- (NEW 3) boundary alignment (uniform weight inside boundary) -------------
+        # boundary 영역 전체를 core 와 비슷한 feature 로 만드는 방향으로 penalty 부여
         boundary_loss = (diff * boundary).sum(dim=(2, 3), keepdim=True) / boundary_area
         boundary_loss = boundary_loss.squeeze(-1).squeeze(-1).mean(dim=1)
         return boundary_loss[valid_mask].mean()
