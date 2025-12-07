@@ -19,7 +19,7 @@ define:
                 # Subtitle-aware training with boundary intra regularization
                 loss_class: SubtitleBoundaryAwareL1BalanceCELoss
                 loss_kwargs:
-                    boundary_scale: 0.2
+                    boundary_scale: 0.4
                     feature_key: fuse_feature
 
         representer:
@@ -58,6 +58,7 @@ define:
                 weight_decay: 0.0001
             learning_rate:  
                 class: DecayLearningRate
+                lr: 0.0008 
                 # train 300장 기준, batch_size 8이면 epoch당 약 40 step → 총 200 epoch ≒ 8000 step
                 epochs: 200
         epochs: 200
