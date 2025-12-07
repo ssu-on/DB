@@ -266,54 +266,87 @@ class L1LeakyDiceLoss(nn.Module):
 
 
 class SubtitleBoundaryAwareL1BalanceCELoss(nn.Module):
-    '''
-    L1BalanceCELoss + Soft Boundary BCE supervision on binary map.
-    full_gt - shrink_gt 로 정의된 boundary 영역을 "약하게" positive 로 유도해
-    subtitle domain 특유의 글자 잘림(under-segmentation)을 완화한다.
-    '''
+    """
+    DBNet 기본 손실(L1BalanceCELoss)에 
+    subtitle 경계 영역(G - Gs)에 대한 soft boundary supervision을 추가.
+    
+    pred['binary']는 항상 sigmoid 적용된 확률 맵임.
+    """
 
-    def __init__(self, eps=1e-6, l1_scale=10, bce_scale=5,
-                 boundary_scale=0.2):
+    def __init__(
+        self,
+        eps=1e-6,
+        l1_scale=10,
+        bce_scale=5,
+        boundary_scale=0.2,
+        boundary_target_scale=0.3,
+    ):
         super().__init__()
-        self.base_loss = L1BalanceCELoss(eps=eps, l1_scale=l1_scale, bce_scale=bce_scale)
+        self.base_loss = L1BalanceCELoss(
+            eps=eps,
+            l1_scale=l1_scale,
+            bce_scale=bce_scale
+        )
         self.boundary_scale = boundary_scale
+        self.boundary_target_scale = boundary_target_scale
         self.eps = eps
 
     def forward(self, pred, batch):
         base_loss, metrics = self.base_loss(pred, batch)
-        boundary = batch.get('boundary', None)
-        binary_pred = pred.get('binary', None)
-
-        if boundary is None or binary_pred is None or self.boundary_scale <= 0:
-            return base_loss, metrics
-
-        # dtype / device 정리
-        binary_pred = binary_pred.float()
-        boundary = boundary.to(device=binary_pred.device, dtype=binary_pred.dtype)
-
-        # shape 정리: (N, 1, H, W)
-        binary_pred = binary_pred.unsqueeze(1) if binary_pred.dim() == 3 else binary_pred
-        boundary = boundary.unsqueeze(1) if boundary.dim() == 3 else boundary
-
-        spatial_size = binary_pred.shape[2:]
-        if boundary.shape[2:] != spatial_size:
-            boundary = F.interpolate(boundary.float(), size=spatial_size, mode='nearest')
-
-        # boundary mask (= Lboundary가 적용될 위치)
-        boundary_mask = (boundary > 0.5).float()
-        area = boundary_mask.sum()
-        if area <= self.eps:
-            return base_loss, metrics
-
-        # 🔥 핵심: 경계를 1로 강제하지 않고 soft positive로 유도
-        target = 0.3 * boundary_mask   # boundary 내부는 0.3 정도의 약한 1
-
-        # BCE 계산
-        bce_map = F.binary_cross_entropy(binary_pred, target, reduction='none')
-        boundary_loss = (bce_map * boundary_mask).sum() / (area + self.eps)
-
-        loss = base_loss + self.boundary_scale * boundary_loss
-
         metrics = dict(metrics)
-        metrics['boundary_soft_bce'] = boundary_loss
-        return loss, metrics
+
+        binary_pred = pred.get("binary", None)
+        boundary = batch.get("boundary", None)
+
+        def resolve_device():
+            if binary_pred is not None and torch.is_tensor(binary_pred):
+                return binary_pred.device
+            for value in pred.values():
+                if torch.is_tensor(value):
+                    return value.device
+            return torch.device("cpu")
+
+        device = resolve_device()
+        zero = torch.zeros((), device=device)
+
+        if binary_pred is None or boundary is None or self.boundary_scale <= 0:
+            metrics["boundary_soft_loss"] = zero
+            return base_loss, metrics
+
+        # ---------- Shape 정리 ----------
+        if binary_pred.dim() == 3:
+            binary_pred = binary_pred.unsqueeze(1)
+        if boundary.dim() == 3:
+            boundary = boundary.unsqueeze(1)
+
+        spatial = binary_pred.shape[2:]
+        # boundary는 geometry 유지 → nearest
+        boundary = F.interpolate(boundary.float(), size=spatial, mode="nearest")
+        boundary = boundary.to(device=device, dtype=binary_pred.dtype)
+        binary_pred = binary_pred.to(device=device, dtype=binary_pred.dtype)
+
+        # ---------- Soft boundary weight ----------
+        boundary_w = boundary.clamp(0., 1.)
+
+        # soft target 생성 (0 ~ boundary_target_scale)
+        target = boundary_w * self.boundary_target_scale
+
+        # ---------- BCE (sigmoid output이므로 normal BCE) ----------
+        bce_map = F.binary_cross_entropy(binary_pred, target, reduction="none")
+
+        # ---------- Per-sample normalization ----------
+        bw_sum = boundary_w.sum((1,2,3))
+        valid = bw_sum > self.eps
+
+        if not torch.any(valid):
+            metrics["boundary_soft_loss"] = zero
+            return base_loss, metrics
+
+        loss_per_sample = (bce_map * boundary_w).sum((1,2,3)) / (bw_sum + self.eps)
+        boundary_loss = loss_per_sample[valid].mean()
+
+        total_loss = base_loss + self.boundary_scale * boundary_loss
+
+        metrics["boundary_soft_loss"] = boundary_loss
+
+        return total_loss, metrics

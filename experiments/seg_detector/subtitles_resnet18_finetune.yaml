@@ -16,11 +16,11 @@ define:
                     adaptive: True
                     in_channels: [64, 128, 256, 512]
                     k: 50
-                # Subtitle-aware training with boundary intra regularization
+                # Subtitle-aware training with boundary-aware supervision
                 loss_class: SubtitleBoundaryAwareL1BalanceCELoss
                 loss_kwargs:
                     boundary_scale: 0.4
-                    feature_key: fuse_feature
+                    boundary_target_scale: 0.3
 
         representer:
             class: SegDetectorRepresenter
