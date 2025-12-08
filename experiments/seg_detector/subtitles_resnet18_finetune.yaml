@@ -17,10 +17,10 @@ define:
                     in_channels: [64, 128, 256, 512]
                     k: 50
                 # Subtitle-aware training with boundary-aware supervision
-                loss_class: SubtitleBoundaryAwareL1BalanceCELoss
+                loss_class: L1BalanceCELoss # SubtitleBoundaryAwareL1BalanceCELoss
                 loss_kwargs:
-                    boundary_scale: 0.4
-                    boundary_target_scale: 0.8
+                    # boundary_scale: 0.4
+                    # boundary_target_scale: 0.8
 
         representer:
             class: SegDetectorRepresenter
