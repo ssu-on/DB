@@ -18,7 +18,7 @@ define:
                     k: 50
                 # Subtitle-aware training with boundary-aware supervision
                 loss_class: L1BalanceCELoss # SubtitleBoundaryAwareL1BalanceCELoss
-                loss_kwargs:
+                #loss_kwargs:
                     # boundary_scale: 0.4
                     # boundary_target_scale: 0.8
 

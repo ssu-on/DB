@@ -24,7 +24,7 @@ define:
         - class: MakeSegDetectionData
           shrink_ratio: 0.2
         - class: MakeBorderMap
-          shrink_ratio: 0.2
+          shrink_ratio: 0.4
         - class: NormalizeImage
         - class: FilterKeys
           superfluous: ['polygons', 'filename', 'shape', 'ignore_tags', 'is_training']
