@@ -56,8 +56,8 @@ define:
             learning_rate:  
                 class: DecayLearningRate
                 # train 300장 기준, batch_size 8이면 epoch당 약 40 step → 총 200 epoch ≒ 8000 step
-                epochs: 200
-        epochs: 200
+                epochs: 150
+        epochs: 150
 
     validation: &validate
         class: ValidationSettings

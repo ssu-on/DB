@@ -16,11 +16,13 @@ define:
                     adaptive: True
                     in_channels: [64, 128, 256, 512]
                     k: 50
-                # Subtitle-aware training with boundary-aware supervision
-                loss_class: L1BalanceCELoss # SubtitleBoundaryAwareL1BalanceCELoss
-                #loss_kwargs:
-                    # boundary_scale: 0.4
-                    # boundary_target_scale: 0.8
+                # Baseline comparison: original DBNet-style subtitle finetune
+                loss_class: L1BalanceCELoss
+                # Subtitle-aware training with boundary intra regularization
+                # loss_class: SubtitleBoundaryAwareL1BalanceCELoss
+                # loss_kwargs:
+                #     boundary_scale: 0.2
+                #     feature_key: fuse_feature
 
         representer:
             class: SegDetectorRepresenter
@@ -53,15 +55,14 @@ define:
             class: OptimizerScheduler
             optimizer: "SGD"
             optimizer_args:
-                lr: 0.001
+                lr: 0.0001
                 momentum: 0.9
                 weight_decay: 0.0001
             learning_rate:  
                 class: DecayLearningRate
-                lr: 0.0005 
                 # train 300장 기준, batch_size 8이면 epoch당 약 40 step → 총 200 epoch ≒ 8000 step
-                epochs: 200
-        epochs: 200
+                epochs: 300
+        epochs: 300
 
     validation: &validate
         class: ValidationSettings
@@ -84,5 +85,4 @@ define:
         log_interval: 50
 
     evaluation: *validate
-
 

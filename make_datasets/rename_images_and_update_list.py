@@ -3,9 +3,9 @@ import re
 
 
 def main():
-    images_dir = r'datasets/dongsim_eng'
-    list_path = r'datasets/dongsim_eng.txt'
-    prefix = 'dongsim_eng_'
+    images_dir = r'/data/subtitle/DBNet/raw_data/zootopia'
+    list_path = r'/data/subtitle/DBNet/raw_data/zootopia.txt'
+    prefix = 'zootopia_'
     ext = 'jpg'
     match_regex = r'(\d+)'
     start_index = 1

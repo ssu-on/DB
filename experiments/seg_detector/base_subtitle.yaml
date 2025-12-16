@@ -6,9 +6,9 @@ define:
   - name: train_data
     class: ImageDataset
     data_dir:
-        - './datasets/Subtitles/'
+        - '/data/subtitle/DBNet/datasets/Subtitles' #'./datasets/Subtitles/'
     data_list:
-        - './datasets/Subtitles/train_list.txt'
+        - '/data/subtitle/DBNet/datasets/Subtitles/train_list.txt' #'./datasets/Subtitles/train_list.txt'
     processes:
         - class: AugmentDetectionData
           augmenter_args:
@@ -22,9 +22,9 @@ define:
           max_tries: 10
         - class: MakeICDARData
         - class: MakeSegDetectionData
-          shrink_ratio: 0.2
+          shrink_ratio: 0.3
         - class: MakeBorderMap
-          shrink_ratio: 0.4
+          shrink_ratio: 0.3
         - class: NormalizeImage
         - class: FilterKeys
           superfluous: ['polygons', 'filename', 'shape', 'ignore_tags', 'is_training']
@@ -32,9 +32,9 @@ define:
   - name: validate_data
     class: ImageDataset
     data_dir:
-        - './datasets/Subtitles/'
+        - '/data/subtitle/DBNet/datasets/Subtitles' #'./datasets/Subtitles/'
     data_list:
-        - './datasets/Subtitles/test_list.txt'
+        - '/data/subtitle/DBNet/datasets/Subtitles/test_list.txt' #'./datasets/Subtitles/test_list.txt'
     processes:
         - class: AugmentDetectionData
           augmenter_args:

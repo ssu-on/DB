@@ -27,8 +27,8 @@ def box_to_quad(left: int, top: int, right: int, bottom: int) -> List[int]:
 
 
 def main():
-    gts_dir = r'datasets/dongsim_eng_gts'
-    prefix = 'dongsim_eng_'
+    gts_dir = r'/data/subtitle/DBNet/raw_data/zootopia_gts'
+    prefix = 'zootopia_'
     img_ext = 'jpg'
     IMG_W, IMG_H = 1920, 1080
     rename_yolo = False
