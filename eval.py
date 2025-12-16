@@ -178,7 +178,7 @@ class Eval:
                     if not os.path.isdir(self.args['result_dir']):
                         os.mkdir(self.args['result_dir'])
                     self.format_output(batch, output)
-                    raw_metric = self.structure.measurer.validate_measure(batch, output, is_output_polygon=self.args['polygon'], box_thresh=self.args['box_thresh'])
+                    raw_metric, _ = self.structure.measurer.validate_measure(batch, output, is_output_polygon=self.args['polygon'], box_thresh=self.args['box_thresh'])
                     raw_metrics.append(raw_metric)
 
                     if visualize and self.structure.visualizer:
