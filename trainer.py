@@ -22,6 +22,7 @@ class Trainer:
         self.current_lr = 0
 
         self.total = 0
+        self.best_fmeasure = -1.0  # Track best fmeasure for saving best model
 
     def init_device(self):
         if torch.cuda.is_available():
@@ -161,6 +162,14 @@ class Trainer:
         for key, metric in all_matircs.items():
             self.logger.info('%s : %f (%d)' % (key, metric.avg, metric.count))
         self.logger.metrics(epoch, self.steps, all_matircs)
+        
+        # Save best model based on fmeasure
+        for key, metric in all_matircs.items():
+            if 'fmeasure' in key.lower() and metric.avg > self.best_fmeasure:
+                self.best_fmeasure = metric.avg
+                self.model_saver.save_checkpoint(model, 'best')
+                self.logger.info('Saved best model with %s: %f' % (key, metric.avg))
+        
         model.train()
         return all_matircs
 
