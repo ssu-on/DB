@@ -270,8 +270,8 @@ def deformable_resnet18(pretrained=True, **kwargs):
                     stage_with_dcn=[False, True, True, True], **kwargs)
     if pretrained:
         #model.load_state_dict(model_zoo.load_url(model_urls['resnet18']), strict=False)
-        pretrained_dict = model_zoo.load_url(model_urls['resnet18'], map_location='cpu') # train할 때
-        #pretrained_dict = model_zoo.load_url(model_urls['resnet18'], map_location=device) # demo할 때는 'device'로 바꾸기
+        #pretrained_dict = model_zoo.load_url(model_urls['resnet18'], map_location='cpu') # train할 때
+        pretrained_dict = model_zoo.load_url(model_urls['resnet18'], map_location=device) # demo할 때는 'device'로 바꾸기
         model.load_state_dict(pretrained_dict, strict=False)
 
     model = model.to(device)
